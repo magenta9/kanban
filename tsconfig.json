@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/main" },
+    { "path": "packages/preload" },
+    { "path": "packages/renderer" }
+  ]
+}

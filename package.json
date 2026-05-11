@@ -1,0 +1,49 @@
+{
+  "name": "kanban",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone Kanban Electron app",
+  "main": "packages/main/dist/index.js",
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:watch": "node scripts/dev.mjs --watch-only",
+    "dev:electron": "electron .",
+    "dev:electron:wait": "node scripts/dev.mjs --electron-only",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm --filter @kanban/shared build && pnpm -r run typecheck",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "package:mac": "pnpm run build && electron-builder --config electron-builder.yml --publish never --mac dmg"
+  },
+  "dependencies": {
+    "@kanban/shared": "workspace:*",
+    "better-sqlite3": "^12.8.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
+    "@tailwindcss/vite": "^4.2.2",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.1.2",
+    "electron": "^41.2.0",
+    "electron-builder": "^26.8.1",
+    "eslint": "^8.57.1",
+    "jsdom": "^25.0.1",
+    "tailwindcss": "^4.2.2",
+    "tsup": "^8.3.5",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.8",
+    "vitest": "^2.1.8",
+    "wait-on": "^8.0.5"
+  }
+}

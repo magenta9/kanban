@@ -1,0 +1,15 @@
+{
+  "name": "@kanban/main",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs --external electron --external better-sqlite3 --external @kanban/shared && tsc -p tsconfig.json --noEmit",
+    "dev": "tsup src/index.ts --format cjs --watch --external electron --external better-sqlite3 --external @kanban/shared",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@kanban/shared": "workspace:*",
+    "better-sqlite3": "^12.8.0"
+  }
+}

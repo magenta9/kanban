@@ -1,0 +1,19 @@
+appId: com.magenta9.kanban
+productName: Kanban
+publish: null
+directories:
+  output: release-electron
+files:
+  - package.json
+  - packages/main/dist/**
+  - packages/preload/dist/**
+  - packages/renderer/dist/**
+  - packages/shared/dist/**
+  - build/icon.png
+mac:
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  target:
+    - dmg
+asarUnpack:
+  - "**/*.node"
