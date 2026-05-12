@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { openKanbanDatabase } from "./db/services";
 import { KanbanRepository } from "./db/repositories/kanban-repository";
+import { SettingsRepository } from "./db/repositories/settings-repository";
 import { resolveKanbanPaths } from "./storage/path-service";
 import { registerIpc } from "./ipc/register";
 
@@ -83,7 +84,8 @@ app.whenReady().then(async () => {
   mkdirSync(paths.root, { recursive: true });
   const database = openKanbanDatabase(paths.databasePath);
   registerIpc({
-    kanban: new KanbanRepository(database)
+    kanban: new KanbanRepository(database),
+    settings: new SettingsRepository(database)
   });
 
   await createWindow();

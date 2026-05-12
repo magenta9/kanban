@@ -60,6 +60,12 @@ export function migrate(database: Database.Database): void {
       label_id TEXT NOT NULL REFERENCES kanban_labels(id) ON DELETE CASCADE,
       PRIMARY KEY (card_id, label_id)
     );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
 
   ensureColumn(database, "kanban_cards", "subtasks_json", "TEXT NOT NULL DEFAULT '[]'");

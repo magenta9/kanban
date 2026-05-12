@@ -11,6 +11,7 @@ import type {
   KanbanColumnPatch,
   KanbanLabel
 } from "./types/kanban";
+import type { AppSettings, UpdateAppSettingsInput } from "./types/settings";
 
 export interface SystemStatus {
   appName: "Kanban";
@@ -22,6 +23,10 @@ export interface SystemStatus {
 export interface IpcContract {
   system: {
     getStatus(): Promise<SystemStatus>;
+  };
+  settings: {
+    getSettings(): Promise<AppSettings>;
+    updateSettings(input: UpdateAppSettingsInput): Promise<AppSettings>;
   };
   kanban: {
     listBoards(): Promise<KanbanBoard[]>;
@@ -52,6 +57,8 @@ export interface IpcContract {
 
 export const ipcContractHandlers = [
   "system.getStatus",
+  "settings.getSettings",
+  "settings.updateSettings",
   "kanban.listBoards",
   "kanban.createBoard",
   "kanban.renameBoard",

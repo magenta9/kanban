@@ -1,6 +1,13 @@
 export const ipcChannels = {
+  app: {
+    openSettings: "app:open-settings"
+  },
   system: {
     getStatus: "system:get-status"
+  },
+  settings: {
+    getSettings: "settings:get-settings",
+    updateSettings: "settings:update-settings"
   },
   kanban: {
     listBoards: "kanban:list-boards",
