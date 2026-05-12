@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron";
+import { ipcChannels } from "@kanban/shared";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { openKanbanDatabase } from "./db/services";
@@ -20,11 +21,17 @@ function configureApplicationMenu(): void {
     return;
   }
 
+  const openSettings = () => {
+    mainWindow?.webContents.send(ipcChannels.app.openSettings);
+  };
+
   const template = [
     {
       label: appName,
       submenu: [
         { role: "about", label: `About ${appName}` },
+        { type: "separator" },
+        { label: "Settings...", accelerator: "Command+,", click: openSettings },
         { type: "separator" },
         { role: "services" },
         { type: "separator" },

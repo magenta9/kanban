@@ -21,6 +21,9 @@ export interface SystemStatus {
 }
 
 export interface IpcContract {
+  app: {
+    onOpenSettings(callback: () => void): () => void;
+  };
   system: {
     getStatus(): Promise<SystemStatus>;
   };
