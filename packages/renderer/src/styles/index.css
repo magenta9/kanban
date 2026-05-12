@@ -224,7 +224,7 @@ body {
   position: fixed;
   z-index: 60;
   bottom: 28px;
-  left: 34px;
+  left: 23px;
   display: inline-grid;
   width: 38px;
   height: 38px;
@@ -508,12 +508,12 @@ textarea {
 
 .board-list-collapsed .kanban-boards {
   align-items: center;
-  padding: 10px;
+  padding: 12px;
 }
 
 .board-list-collapsed .kanban-brand {
   width: 100%;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 0;
 }
 
@@ -537,9 +537,10 @@ textarea {
 .board-list-collapsed .kanban-board-list button {
   display: grid;
   grid-template-columns: 1fr;
-  min-height: 38px;
-  place-items: center;
-  padding: 0;
+  min-height: 50px;
+  align-items: center;
+  justify-items: start;
+  padding: 8px 3px;
   text-align: center;
 }
 
@@ -556,15 +557,15 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border: 1px solid var(--kanban-border);
+  border: 1px solid transparent;
   border-radius: 7px;
-  background: var(--kanban-surface);
-  color: var(--kanban-text);
+  background: transparent;
+  color: var(--kanban-muted);
   font-size: 12px;
   font-weight: 650;
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
   transition: opacity 0.16s ease, transform 0.16s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
@@ -576,9 +577,17 @@ textarea {
 }
 
 .kanban-board-add-trigger:hover {
-  border-color: var(--kanban-primary-soft-strong);
-  background: var(--kanban-primary-soft);
-  color: var(--kanban-primary);
+  border-color: var(--kanban-border);
+  background: var(--kanban-hover-bg);
+  color: var(--kanban-text);
+}
+
+@media (hover: none) {
+  .kanban-board-add-trigger {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
 }
 
 .kanban-board-list button {
@@ -2056,9 +2065,18 @@ textarea {
   color: var(--kanban-muted);
 }
 
+.kanban-editor-content ul,
+.kanban-editor-content ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
 .kanban-editor-content ul {
   list-style: disc;
-  padding-left: 20px;
+}
+
+.kanban-editor-content ol {
+  list-style: decimal;
 }
 
 .kanban-editor-content pre {
