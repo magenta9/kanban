@@ -556,7 +556,6 @@ export function KanbanPage(): JSX.Element {
                                                 onArchiveCard={(cardId) => void archiveCard(cardId)}
                                                 onDeleteCard={(cardId) => void deleteCard(cardId)}
                                                 onRename={() => void renameColumn(column)}
-                                                onArchive={() => void archiveColumn(column)}
                                             />
                                         ))}
                                         <button type="button" className="kanban-add-column" onClick={createColumn}>
@@ -820,8 +819,7 @@ function SortableColumn({
     onOpenCard,
     onArchiveCard,
     onDeleteCard,
-    onRename,
-    onArchive
+    onRename
 }: {
     column: KanbanColumn;
     cards: KanbanCard[];
@@ -837,7 +835,6 @@ function SortableColumn({
     onArchiveCard: (id: string) => void;
     onDeleteCard: (id: string) => void;
     onRename: () => void;
-    onArchive: () => void;
 }): JSX.Element {
     const { attributes, isDragging, isOver, listeners, setNodeRef, transform, transition } = useSortable({ id: `column:${column.id}` });
     return (
@@ -846,11 +843,9 @@ function SortableColumn({
                 <span className="kanban-column-dot" style={{ background: column.color ?? "#9ca3af" }} />
                 <div className="kanban-column-title" {...attributes} {...listeners} aria-label={`Drag ${column.name}`}>
                     <strong>{column.name}</strong>
-                    <small>{cards.length} cards</small>
                 </div>
+                <button type="button" className="kanban-column-rename" onClick={onRename} aria-label={`Rename ${column.name}`}><Pencil size={13} /></button>
                 <span className="kanban-column-count">{cards.length}</span>
-                <button type="button" onClick={onRename} aria-label={`Rename ${column.name}`}><Pencil size={13} /></button>
-                <button type="button" onClick={onArchive} aria-label={`Archive ${column.name}`}><Archive size={13} /></button>
             </header>
             <SortableContext items={cards.map((card) => `card:${card.id}`)} strategy={verticalListSortingStrategy}>
                 <div className="kanban-card-stack">

@@ -30,7 +30,9 @@
   --app-success: #20b486;
   --app-warning: #e6a02e;
   --app-danger: #c2412d;
-  --app-titlebar-bg: rgba(250, 250, 248, 0.86);
+  --app-titlebar-bg: #f7f7f4;
+  --app-titlebar-sidebar-bg: #f1f1ee;
+  --app-titlebar-main-bg: #fbfbf9;
   --app-selection-bg: rgba(36, 36, 36, 0.14);
   --app-scrollbar-thumb: rgba(36, 36, 36, 0.16);
   --app-scrollbar-thumb-hover: rgba(36, 36, 36, 0.24);
@@ -83,7 +85,9 @@
   --app-success: #56d7ac;
   --app-warning: #f1b75c;
   --app-danger: #f07a64;
-  --app-titlebar-bg: rgba(21, 21, 19, 0.88);
+  --app-titlebar-bg: #171714;
+  --app-titlebar-sidebar-bg: #1f1e1a;
+  --app-titlebar-main-bg: #20201c;
   --app-selection-bg: rgba(210, 185, 143, 0.28);
   --app-scrollbar-thumb: rgba(245, 238, 225, 0.18);
   --app-scrollbar-thumb-hover: rgba(245, 238, 225, 0.28);
@@ -135,7 +139,9 @@
     --app-success: #56d7ac;
     --app-warning: #f1b75c;
     --app-danger: #f07a64;
-    --app-titlebar-bg: rgba(21, 21, 19, 0.88);
+    --app-titlebar-bg: #171714;
+    --app-titlebar-sidebar-bg: #1f1e1a;
+    --app-titlebar-main-bg: #20201c;
     --app-selection-bg: rgba(210, 185, 143, 0.28);
     --app-scrollbar-thumb: rgba(245, 238, 225, 0.18);
     --app-scrollbar-thumb-hover: rgba(245, 238, 225, 0.28);
@@ -191,7 +197,11 @@ body {
   display: grid;
   grid-template-columns: var(--app-traffic-light-safe-width) 1fr var(--app-traffic-light-safe-width);
   align-items: center;
-  background: var(--app-titlebar-bg);
+  background: linear-gradient(to right, var(--app-titlebar-sidebar-bg) 0 238px, var(--app-titlebar-main-bg) 238px);
+}
+
+.app-shell:has(.kanban-tool.board-list-collapsed) .app-titlebar {
+  background: linear-gradient(to right, var(--app-titlebar-sidebar-bg) 0 62px, var(--app-titlebar-main-bg) 62px);
 }
 
 .app-titlebar-spacer {
@@ -218,7 +228,7 @@ body {
   display: flex;
   min-height: 0;
   overflow: hidden;
-  padding: 0 8px 8px;
+  padding: 0;
 }
 
 .theme-switch {
@@ -342,11 +352,11 @@ textarea {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--kanban-border);
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   background: var(--kanban-bg);
   color: var(--kanban-text);
-  box-shadow: var(--kanban-shadow);
+  box-shadow: none;
 }
 
 :root[data-theme="dark"] .kanban-tool {
@@ -784,17 +794,17 @@ textarea {
 }
 
 .kanban-column header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  display: flex;
   align-items: center;
   gap: 7px;
   padding: 9px;
 }
 
 .kanban-column-title {
-  display: grid;
+  display: flex;
   min-width: 0;
-  gap: 1px;
+  flex: 0 1 auto;
+  align-items: center;
   cursor: grab;
   border-radius: 6px;
   padding: 3px 5px;
@@ -818,6 +828,7 @@ textarea {
 
 .kanban-column header button {
   display: inline-flex;
+  flex: 0 0 auto;
   width: 24px;
   height: 24px;
   align-items: center;
@@ -829,6 +840,20 @@ textarea {
   padding: 0;
 }
 
+.kanban-column-rename {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-3px);
+  transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.kanban-column header:hover .kanban-column-rename,
+.kanban-column header:focus-within .kanban-column-rename {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
 .kanban-column header button:hover {
   border-color: var(--kanban-border);
   background: var(--kanban-hover-bg);
@@ -837,6 +862,7 @@ textarea {
 
 .kanban-column-count {
   display: inline-flex;
+  margin-left: auto;
   min-width: 24px;
   height: 20px;
   align-items: center;
@@ -856,6 +882,8 @@ textarea {
 
 .kanban-card-stack {
   display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
   min-height: 80px;
   flex: 1;
   gap: 8px;
@@ -865,7 +893,15 @@ textarea {
 
 .kanban-card {
   display: grid;
+  grid-template-rows: auto auto auto auto;
+  width: 320px;
+  min-width: 320px;
+  max-width: 320px;
+  height: 168px;
+  min-height: 168px;
+  max-height: 168px;
   gap: 9px;
+  overflow: hidden;
   border: 1px solid var(--kanban-border);
   border-radius: 8px;
   background: var(--kanban-surface);
@@ -945,7 +981,8 @@ textarea {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  line-clamp: 1;
+  -webkit-line-clamp: 1;
   overflow-wrap: anywhere;
   font-size: 13px;
   font-weight: 680;
@@ -956,7 +993,8 @@ textarea {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  line-clamp: 1;
+  -webkit-line-clamp: 1;
   line-height: 1.45;
 }
 
@@ -2387,6 +2425,12 @@ textarea {
 }
 
 @media (max-width: 980px) {
+
+  .app-titlebar,
+  .app-shell:has(.kanban-tool.board-list-collapsed) .app-titlebar {
+    background: var(--app-titlebar-main-bg);
+  }
+
   .kanban-tool {
     grid-template-columns: 1fr;
   }
