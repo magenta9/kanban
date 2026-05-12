@@ -20,6 +20,8 @@ import {
     Archive,
     CalendarDays,
     ChevronDown,
+    CircleHelp,
+    Command,
     Columns3,
     Flag,
     KanbanSquare,
@@ -36,6 +38,17 @@ import { getApi } from "../../api";
 import { IconButton, SegmentedControl } from "../../components/tool-layout";
 
 type ViewMode = "kanban" | "list" | "archive";
+
+type KeyboardShortcutAction =
+    | { type: "openHelp" }
+    | { type: "close" }
+    | { type: "toggleBoardList" }
+    | { type: "createCard" }
+    | { type: "createColumn" }
+    | { type: "setView"; view: ViewMode }
+    | { type: "selectBoardByIndex"; index: number };
+
+type ShortcutEvent = Pick<KeyboardEvent, "key" | "metaKey" | "shiftKey" | "altKey">;
 
 interface SelectOption {
     value: string;
@@ -59,6 +72,44 @@ interface ConfirmDialogState {
 
 const priorities: KanbanPriority[] = ["none", "low", "medium", "high", "urgent"];
 const emptyRichTextDocument = { type: "doc", content: [{ type: "paragraph" }] } as KanbanRichTextDocument;
+const keyboardShortcutGroups = [
+    {
+        title: "Boards",
+        shortcuts: [
+            { keys: ["Cmd", "1...9"], title: "Switch board", description: "Open the board in the matching position from the sidebar list." },
+            { keys: ["Cmd", "B"], title: "Toggle sidebar", description: "Collapse or expand the board list." }
+        ]
+    },
+    {
+        title: "Views",
+        shortcuts: [
+            { keys: ["Cmd", "K"], title: "Kanban view", description: "Show cards grouped in board columns." },
+            { keys: ["Cmd", "L"], title: "List view", description: "Show active cards in a compact list." },
+            { keys: ["Cmd", "A"], title: "Archive view", description: "Show archived cards for restore or cleanup." }
+        ]
+    },
+    {
+        title: "Create",
+        shortcuts: [
+            { keys: ["Cmd", "N"], title: "New card", description: "Open a card composer in the current card's column, current composer, or first column." },
+            { keys: ["Cmd", "Shift", "N"], title: "New column", description: "Open the new column dialog for the selected board." }
+        ]
+    },
+    {
+        title: "System",
+        shortcuts: [
+            { keys: ["Cmd", "/"], title: "Keyboard shortcuts", description: "Open this help panel." },
+            { keys: ["Esc"], title: "Close", description: "Close the top help panel, dialog, or card details panel." }
+        ]
+    }
+] as const;
+const helpGuides = [
+    "Switch boards with Cmd+1...9 using the order shown in the sidebar.",
+    "Switch between Kanban, List, and Archive views with Cmd+K, Cmd+L, and Cmd+A.",
+    "Create cards and columns from the keyboard while keeping destructive actions on explicit buttons.",
+    "Edit card details in the side panel; changes save automatically after a short pause.",
+    "Reorder cards, columns, and subtasks by dragging them, including keyboard drag support from the focused handle."
+] as const;
 
 export function KanbanPage(): JSX.Element {
     const [boards, setBoards] = useState<KanbanBoard[]>([]);
@@ -76,6 +127,8 @@ export function KanbanPage(): JSX.Element {
     const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
     const [activeDragId, setActiveDragId] = useState<string | null>(null);
     const [boardListCollapsed, setBoardListCollapsed] = useState(false);
+    const [helpOpen, setHelpOpen] = useState(false);
+    const composerInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -121,6 +174,8 @@ export function KanbanPage(): JSX.Element {
     useEffect(() => {
         void loadBoards();
     }, []);
+
+    useEffect(() => getApi().system.onShowKeyboardShortcuts(() => setHelpOpen(true)), []);
 
     async function selectBoard(boardId: string): Promise<void> {
         setSelectedBoardId(boardId);
@@ -202,6 +257,25 @@ export function KanbanPage(): JSX.Element {
         setDraftCardTitles((current) => ({ ...current, [columnId]: value }));
     }
 
+    function setComposerInputRef(columnId: string, node: HTMLInputElement | null): void {
+        composerInputRefs.current[columnId] = node;
+    }
+
+    function focusComposer(columnId: string): void {
+        window.requestAnimationFrame(() => composerInputRefs.current[columnId]?.focus());
+    }
+
+    function openCardComposerFromShortcut(): void {
+        if (!selectedBoardId) return;
+        const selectedCardColumnId = selectedCard && visibleColumns.some((column) => column.id === selectedCard.columnId) ? selectedCard.columnId : "";
+        const activeComposerColumnIdIsVisible = activeComposerColumnId && visibleColumns.some((column) => column.id === activeComposerColumnId);
+        const targetColumnId = selectedCardColumnId || (activeComposerColumnIdIsVisible ? activeComposerColumnId : "") || visibleColumns[0]?.id;
+        if (!targetColumnId) return;
+        setSelectedCardId("");
+        setActiveComposerColumnId(targetColumnId);
+        focusComposer(targetColumnId);
+    }
+
     async function createCard(columnId: string): Promise<void> {
         if (!selectedBoardId) return;
         const title = draftCardTitles[columnId]?.trim();
@@ -279,6 +353,64 @@ export function KanbanPage(): JSX.Element {
     function handleDragStart(event: DragStartEvent): void {
         setActiveDragId(String(event.active.id));
     }
+
+    useEffect(() => {
+        function handleKeyDown(event: KeyboardEvent): void {
+            const action = keyboardShortcutFromEvent(event, isEditableShortcutTarget(event.target));
+            if (!action) return;
+
+            if (action.type !== "openHelp" && action.type !== "close" && (helpOpen || textDialog || confirmDialog)) {
+                return;
+            }
+
+            event.preventDefault();
+
+            if (action.type === "openHelp") {
+                setHelpOpen(true);
+                return;
+            }
+
+            if (action.type === "close") {
+                if (helpOpen) setHelpOpen(false);
+                else if (textDialog) setTextDialog(null);
+                else if (confirmDialog) setConfirmDialog(null);
+                else if (activeComposerColumnId) {
+                    setDraftCardTitle(activeComposerColumnId, "");
+                    setActiveComposerColumnId("");
+                }
+                else if (selectedCardId) setSelectedCardId("");
+                return;
+            }
+
+            if (action.type === "selectBoardByIndex") {
+                const board = boards[action.index];
+                if (board && board.id !== selectedBoardId) void selectBoard(board.id);
+                return;
+            }
+
+            if (action.type === "toggleBoardList") {
+                setBoardListCollapsed((current) => !current);
+                return;
+            }
+
+            if (action.type === "setView") {
+                setView(action.view);
+                return;
+            }
+
+            if (action.type === "createCard") {
+                openCardComposerFromShortcut();
+                return;
+            }
+
+            if (action.type === "createColumn") {
+                createColumn();
+            }
+        }
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [activeComposerColumnId, boards, confirmDialog, helpOpen, selectedBoardId, selectedCard, selectedCardId, textDialog, visibleColumns]);
 
     async function handleDragEnd(event: DragEndEvent): Promise<void> {
         try {
@@ -390,6 +522,7 @@ export function KanbanPage(): JSX.Element {
                                                 labels={labels}
                                                 draftTitle={draftCardTitles[column.id] ?? ""}
                                                 composerOpen={activeComposerColumnId === column.id}
+                                                composerInputRef={(node) => setComposerInputRef(column.id, node)}
                                                 onDraftTitleChange={(value) => setDraftCardTitle(column.id, value)}
                                                 onOpenComposer={() => setActiveComposerColumnId(column.id)}
                                                 onCloseComposer={() => { setDraftCardTitle(column.id, ""); setActiveComposerColumnId(""); }}
@@ -430,6 +563,8 @@ export function KanbanPage(): JSX.Element {
                         </DndContext>
                     ) : null}
 
+                    {helpOpen ? <KeyboardShortcutsHelp onClose={() => setHelpOpen(false)} /> : null}
+
                     {selectedCard ? (
                         <CardDetails
                             card={selectedCard}
@@ -446,6 +581,47 @@ export function KanbanPage(): JSX.Element {
             {textDialog ? <TextDialog state={textDialog} onClose={() => setTextDialog(null)} /> : null}
             {confirmDialog ? <ConfirmDialog state={confirmDialog} onClose={() => setConfirmDialog(null)} /> : null}
         </section>
+    );
+}
+
+function KeyboardShortcutsHelp({ onClose }: { onClose: () => void }): JSX.Element {
+    return (
+        <div className="kanban-dialog-backdrop" role="presentation">
+            <section className="kanban-dialog kanban-help-dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+                <header>
+                    <span className="kanban-help-title"><CircleHelp size={17} />Keyboard Shortcuts</span>
+                    <button type="button" onClick={onClose} aria-label="Close help"><X size={16} /></button>
+                </header>
+                <div className="kanban-help-body">
+                    <div className="kanban-help-shortcuts">
+                        {keyboardShortcutGroups.map((group) => (
+                            <section className="kanban-help-group" key={group.title}>
+                                <h3>{group.title}</h3>
+                                <div className="kanban-help-shortcut-list">
+                                    {group.shortcuts.map((shortcut) => (
+                                        <article className="kanban-help-shortcut" key={shortcut.title}>
+                                            <div>
+                                                <strong>{shortcut.title}</strong>
+                                                <span>{shortcut.description}</span>
+                                            </div>
+                                            <span className="kanban-help-keys" aria-label={shortcut.keys.join(" plus ")}>
+                                                {shortcut.keys.map((key) => <kbd key={key}>{key}</kbd>)}
+                                            </span>
+                                        </article>
+                                    ))}
+                                </div>
+                            </section>
+                        ))}
+                    </div>
+                    <aside className="kanban-help-guide" aria-label="Quick guide">
+                        <h3><Command size={15} />Quick Guide</h3>
+                        <ul>
+                            {helpGuides.map((guide) => <li key={guide}>{guide}</li>)}
+                        </ul>
+                    </aside>
+                </div>
+            </section>
+        </div>
     );
 }
 
@@ -611,6 +787,7 @@ function SortableColumn({
     labels,
     draftTitle,
     composerOpen,
+    composerInputRef,
     onDraftTitleChange,
     onOpenComposer,
     onCloseComposer,
@@ -626,6 +803,7 @@ function SortableColumn({
     labels: KanbanLabel[];
     draftTitle: string;
     composerOpen: boolean;
+    composerInputRef: (node: HTMLInputElement | null) => void;
     onDraftTitleChange: (value: string) => void;
     onOpenComposer: () => void;
     onCloseComposer: () => void;
@@ -666,7 +844,7 @@ function SortableColumn({
             </SortableContext>
             {composerOpen ? (
                 <form className="kanban-card-composer open" onSubmit={(event) => { event.preventDefault(); onCreateCard(); }}>
-                    <input value={draftTitle} onChange={(event) => onDraftTitleChange(event.target.value)} placeholder="Task title" autoFocus />
+                    <input ref={composerInputRef} value={draftTitle} onChange={(event) => onDraftTitleChange(event.target.value)} placeholder="Task title" autoFocus />
                     <div className="kanban-card-composer-actions">
                         <button type="submit" disabled={!draftTitle.trim()} aria-label={`Add task to ${column.name}`}>
                             <Plus size={14} /> Add
@@ -889,17 +1067,6 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
         useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
         useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
     );
-
-    useEffect(() => {
-        function handleKeyDown(event: KeyboardEvent): void {
-            if (event.key !== "Escape") return;
-            event.stopPropagation();
-            onClose();
-        }
-
-        window.addEventListener("keydown", handleKeyDown);
-        return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [onClose]);
 
     useEffect(() => {
         setTitle(card.title);
@@ -1226,6 +1393,36 @@ function RichTextEditor({ value, onChange }: { value?: KanbanRichTextDocument; o
 
 export function shouldSyncRichTextEditorContent(currentValue: JSONContent, nextValue: JSONContent): boolean {
     return JSON.stringify(currentValue) !== JSON.stringify(nextValue);
+}
+
+export function isEditableShortcutTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) return false;
+    let element: Element | null = target;
+    while (element) {
+        if (element.matches("input, textarea, select")) return true;
+        if (element instanceof HTMLElement && (element.isContentEditable || element.contentEditable === "true" || element.getAttribute("contenteditable") === "")) return true;
+        element = element.parentElement;
+    }
+    return false;
+}
+
+export function keyboardShortcutFromEvent(event: ShortcutEvent, editableTarget: boolean): KeyboardShortcutAction | null {
+    if (event.key === "Escape") return { type: "close" };
+    if (event.metaKey && !event.shiftKey && !event.altKey && event.key === "/") return { type: "openHelp" };
+    if (editableTarget || !event.metaKey || event.altKey) return null;
+
+    if (!event.shiftKey && /^[1-9]$/.test(event.key)) {
+        return { type: "selectBoardByIndex", index: Number(event.key) - 1 };
+    }
+
+    const key = event.key.toLowerCase();
+    if (!event.shiftKey && key === "b") return { type: "toggleBoardList" };
+    if (!event.shiftKey && key === "k") return { type: "setView", view: "kanban" };
+    if (!event.shiftKey && key === "l") return { type: "setView", view: "list" };
+    if (!event.shiftKey && key === "a") return { type: "setView", view: "archive" };
+    if (!event.shiftKey && key === "n") return { type: "createCard" };
+    if (event.shiftKey && key === "n") return { type: "createColumn" };
+    return null;
 }
 
 function PriorityBadge({ priority }: { priority: KanbanPriority }): JSX.Element {
