@@ -20,6 +20,8 @@ import {
     Archive,
     CalendarDays,
     ChevronDown,
+    ChevronLeft,
+    ChevronRight,
     CircleHelp,
     Command,
     Columns3,
@@ -71,6 +73,7 @@ interface ConfirmDialogState {
 }
 
 const priorities: KanbanPriority[] = ["none", "low", "medium", "high", "urgent"];
+const weekdaysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const emptyRichTextDocument = { type: "doc", content: [{ type: "paragraph" }] } as KanbanRichTextDocument;
 const keyboardShortcutGroups = [
     {
@@ -308,6 +311,8 @@ export function KanbanPage(): JSX.Element {
             comments: patch.comments
         };
         if (Object.prototype.hasOwnProperty.call(patch, "dueDate")) nextPatch.dueDate = patch.dueDate ?? null;
+        if (Object.prototype.hasOwnProperty.call(patch, "startDate")) nextPatch.startDate = patch.startDate ?? null;
+        if (Object.prototype.hasOwnProperty.call(patch, "endDate")) nextPatch.endDate = patch.endDate ?? null;
         await getApi().kanban.updateCard({ id: cardId, patch: nextPatch });
         await loadBoardData(selectedBoardId);
         setError(null);
@@ -569,7 +574,7 @@ export function KanbanPage(): JSX.Element {
                                     labels={labels}
                                     onOpenCard={setSelectedCardId}
                                     onMoveCard={(cardId, columnId) => void updateCard(cardId, { columnId })}
-                                    onChangeDueDate={(cardId, dueDate) => void updateCard(cardId, { dueDate })}
+                                    onChangeDateRange={(cardId, startDate, endDate) => void updateCard(cardId, { startDate, endDate })}
                                     onArchiveCard={(cardId) => void archiveCard(cardId)}
                                     onDeleteCard={(cardId) => void deleteCard(cardId)}
                                 />
@@ -949,19 +954,19 @@ function SortableCard({ card, labels, onOpen, onArchive, onDelete }: {
                 {cardLabels.length > 0 ? cardLabels.map((label) => <LabelChip key={label.id} label={label} />) : <span className="kanban-card-muted"><Tag size={12} /> No labels</span>}
             </div>
             <div className="kanban-card-footerline">
-                <span className="kanban-date-chip"><CalendarDays size={12} /> {card.dueDate ? formatDisplayDate(card.dueDate) : "No due date"}</span>
+                <span className="kanban-date-chip"><CalendarDays size={12} /> {formatCardDateRange(card)}</span>
             </div>
         </article>
     );
 }
 
-function ListView({ columns, cards, labels, onOpenCard, onMoveCard, onChangeDueDate, onArchiveCard, onDeleteCard }: {
+function ListView({ columns, cards, labels, onOpenCard, onMoveCard, onChangeDateRange, onArchiveCard, onDeleteCard }: {
     columns: KanbanColumn[];
     cards: KanbanCard[];
     labels: KanbanLabel[];
     onOpenCard: (id: string) => void;
     onMoveCard: (cardId: string, columnId: string) => void;
-    onChangeDueDate: (cardId: string, dueDate: number | null) => void;
+    onChangeDateRange: (cardId: string, startDate: number | null, endDate: number | null) => void;
     onArchiveCard: (cardId: string) => void;
     onDeleteCard: (cardId: string) => void;
 }): JSX.Element {
@@ -982,7 +987,7 @@ function ListView({ columns, cards, labels, onOpenCard, onMoveCard, onChangeDueD
                                     {labels.filter((label) => card.labelIds.includes(label.id)).map((label) => <LabelChip key={label.id} label={label} />)}
                                 </span>
                                 <PriorityBadge priority={card.priority} />
-                                <ListDueDateControl card={card} onChange={(value) => onChangeDueDate(card.id, value)} />
+                                <ListDateRangeControl card={card} onChange={(startDate, endDate) => onChangeDateRange(card.id, startDate, endDate)} />
                                 <select value={card.columnId} onChange={(event) => onMoveCard(card.id, event.target.value)}>
                                     {columns.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
                                 </select>
@@ -999,28 +1004,104 @@ function ListView({ columns, cards, labels, onOpenCard, onMoveCard, onChangeDueD
     );
 }
 
-function ListDueDateControl({ card, onChange }: { card: KanbanCard; onChange: (dueDate: number | null) => void }): JSX.Element {
-    const inputRef = useRef<HTMLInputElement>(null);
+function ListDateRangeControl({ card, onChange }: { card: KanbanCard; onChange: (startDate: number | null, endDate: number | null) => void }): JSX.Element {
+    return (
+        <DateRangePicker
+            className="kanban-list-date-control"
+            ariaLabel={`Choose date range for ${card.title}`}
+            startDate={cardStartDate(card) ?? null}
+            endDate={cardEndDate(card) ?? null}
+            onChange={onChange}
+            compact
+        />
+    );
+}
 
-    function openPicker(): void {
-        const input = inputRef.current;
-        if (!input) return;
-        input.showPicker?.();
-        input.focus();
+function DateRangePicker({ startDate, endDate, onChange, ariaLabel, className = "", compact = false }: {
+    startDate: number | null;
+    endDate: number | null;
+    onChange: (startDate: number | null, endDate: number | null) => void;
+    ariaLabel: string;
+    className?: string;
+    compact?: boolean;
+}): JSX.Element {
+    const [open, setOpen] = useState(false);
+    const [month, setMonth] = useState(() => new Date(startDate ?? endDate ?? Date.now()));
+    const selectedStart = startDate ?? undefined;
+    const selectedEnd = endDate ?? undefined;
+
+    useEffect(() => {
+        if (!open) return;
+        setMonth(new Date(startDate ?? endDate ?? Date.now()));
+    }, [endDate, open, startDate]);
+
+    const year = month.getFullYear();
+    const monthIndex = month.getMonth();
+    const cells = calendarCells(year, monthIndex);
+    const monthTitle = month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+    function selectDate(timestamp: number): void {
+        if (selectedStart === undefined || selectedEnd !== undefined) {
+            onChange(timestamp, null);
+            return;
+        }
+
+        const nextRange = normalizeDateRange(selectedStart, timestamp);
+        onChange(nextRange.startDate, nextRange.endDate);
+        setOpen(false);
+    }
+
+    function clearRange(): void {
+        onChange(null, null);
+        setOpen(false);
     }
 
     return (
-        <span className="kanban-list-date-control">
-            <button type="button" aria-label={`Choose due date for ${card.title}`} onClick={openPicker}>
-                <CalendarDays size={12} />
+        <span
+            className={`kanban-date-range-picker ${className} ${compact ? "compact" : ""}`.trim()}
+            onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+            }}
+        >
+            <button type="button" className="kanban-date-picker-trigger" aria-label={ariaLabel} aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+                <CalendarDays size={compact ? 12 : 14} />
             </button>
-            <input
-                ref={inputRef}
-                type="date"
-                aria-label={`Due date for ${card.title}`}
-                value={card.dueDate ? dateInputValue(card.dueDate) : ""}
-                onChange={(event) => onChange(dateInputTimestamp(event.target.value))}
-            />
+            <button type="button" className="kanban-date-range-value" aria-label={ariaLabel} aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+                {formatDateRange(startDate ?? undefined, endDate ?? undefined)}
+            </button>
+            {open ? (
+                <div className="kanban-calendar-popover" role="dialog" aria-label="Date range picker">
+                    <div className="kanban-calendar-nav">
+                        <button type="button" onClick={() => setMonth(new Date(year, monthIndex - 1, 1))} aria-label="Previous month"><ChevronLeft size={15} /></button>
+                        <strong>{monthTitle}</strong>
+                        <button type="button" onClick={() => setMonth(new Date(year, monthIndex + 1, 1))} aria-label="Next month"><ChevronRight size={15} /></button>
+                    </div>
+                    <div className="kanban-calendar-grid">
+                        {weekdaysShort.map((weekday) => <span key={weekday} className="kanban-calendar-weekday">{weekday}</span>)}
+                        {cells.map((cell) => {
+                            const timestamp = dateOnlyTimestamp(cell.year, cell.month, cell.day);
+                            const isSelectedStart = selectedStart === timestamp;
+                            const isSelectedEnd = selectedEnd === timestamp;
+                            const isInRange = Boolean(selectedStart !== undefined && selectedEnd !== undefined && timestamp > selectedStart && timestamp < selectedEnd);
+                            const isToday = timestamp === todayTimestamp();
+                            return (
+                                <button
+                                    type="button"
+                                    key={`${cell.year}-${cell.month}-${cell.day}`}
+                                    className={`kanban-calendar-day ${cell.otherMonth ? "other-month" : ""} ${isToday ? "today" : ""} ${isSelectedStart ? "selected-start" : ""} ${isSelectedEnd ? "selected-end" : ""} ${isInRange ? "in-range" : ""}`}
+                                    onClick={() => selectDate(timestamp)}
+                                >
+                                    {cell.day}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <div className="kanban-calendar-footer">
+                        <span>{selectedStart !== undefined && selectedEnd === undefined ? "Pick an end date" : formatDateRange(startDate ?? undefined, endDate ?? undefined)}</span>
+                        <button type="button" onClick={clearRange}>Clear</button>
+                    </div>
+                </div>
+            ) : null}
         </span>
     );
 }
@@ -1046,7 +1127,7 @@ function ArchiveView({ cards, labels, onOpenCard, onRestore, onDelete }: {
                             {labels.filter((label) => card.labelIds.includes(label.id)).map((label) => <LabelChip key={label.id} label={label} />)}
                         </span>
                         <PriorityBadge priority={card.priority} />
-                        <span className="kanban-date-chip"><CalendarDays size={12} /> {card.dueDate ? formatDisplayDate(card.dueDate) : "No due"}</span>
+                        <span className="kanban-date-chip"><CalendarDays size={12} /> {formatCardDateRange(card)}</span>
                         <span className="kanban-list-actions">
                             <button type="button" onClick={() => void onRestore(card.id)} aria-label={`Restore ${card.title}`}><RotateCcw size={14} /></button>
                             <button type="button" onClick={() => void onDelete(card.id)} aria-label={`Delete ${card.title}`}><Trash2 size={14} /></button>
@@ -1070,7 +1151,8 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
     const [title, setTitle] = useState(card.title);
     const [columnId, setColumnId] = useState(card.columnId);
     const [priority, setPriority] = useState<KanbanPriority>(card.priority);
-    const [dueDate, setDueDate] = useState(card.dueDate ? dateInputValue(card.dueDate) : "");
+    const [startDate, setStartDate] = useState<number | null>(cardStartDate(card) ?? null);
+    const [endDate, setEndDate] = useState<number | null>(cardEndDate(card) ?? null);
     const [descriptionJson, setDescriptionJson] = useState<KanbanRichTextDocument | undefined>(card.descriptionJson);
     const [descriptionText, setDescriptionText] = useState(card.descriptionText ?? "");
     const [subtasks, setSubtasks] = useState<KanbanSubtask[]>(card.subtasks);
@@ -1081,7 +1163,6 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
     const [tagDraft, setTagDraft] = useState("");
     const [tagEditorOpen, setTagEditorOpen] = useState(false);
     const lastSavedSnapshot = useRef("");
-    const dueDateInputRef = useRef<HTMLInputElement>(null);
     const selectedColumn = columns.find((column) => column.id === columnId);
     const subtaskSensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -1092,7 +1173,8 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
         setTitle(card.title);
         setColumnId(card.columnId);
         setPriority(card.priority);
-        setDueDate(card.dueDate ? dateInputValue(card.dueDate) : "");
+        setStartDate(cardStartDate(card) ?? null);
+        setEndDate(cardEndDate(card) ?? null);
         setDescriptionJson(card.descriptionJson);
         setDescriptionText(card.descriptionText ?? "");
         setSubtasks(card.subtasks);
@@ -1101,7 +1183,8 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
             title: card.title,
             columnId: card.columnId,
             priority: card.priority,
-            dueDate: card.dueDate ? dateInputValue(card.dueDate) : "",
+            startDate: cardStartDate(card) ?? null,
+            endDate: cardEndDate(card) ?? null,
             descriptionJson: card.descriptionJson,
             descriptionText: card.descriptionText ?? "",
             subtasks: card.subtasks,
@@ -1110,7 +1193,7 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
     }, [card.id, card.updatedAt]);
 
     useEffect(() => {
-        const snapshot = cardDetailsSnapshot({ title, columnId, priority, dueDate, descriptionJson, descriptionText, subtasks, comments });
+        const snapshot = cardDetailsSnapshot({ title, columnId, priority, startDate, endDate, descriptionJson, descriptionText, subtasks, comments });
         if (!lastSavedSnapshot.current) {
             lastSavedSnapshot.current = snapshot;
             return;
@@ -1122,7 +1205,8 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
                 title,
                 columnId,
                 priority,
-                dueDate: dateInputTimestamp(dueDate),
+                startDate,
+                endDate,
                 descriptionJson,
                 descriptionText,
                 subtasks,
@@ -1132,7 +1216,7 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
             });
         }, 650);
         return () => window.clearTimeout(timeout);
-    }, [card.id, title, columnId, priority, dueDate, descriptionJson, descriptionText, subtasks, comments, onSave]);
+    }, [card.id, title, columnId, priority, startDate, endDate, descriptionJson, descriptionText, subtasks, comments, onSave]);
 
     function addSubtask(): void {
         const nextTitle = subtaskDraft.trim();
@@ -1185,13 +1269,6 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
         void onCreateLabel(card, name);
     }
 
-    function openDueDatePicker(): void {
-        const input = dueDateInputRef.current;
-        if (!input) return;
-        input.showPicker?.();
-        input.focus();
-    }
-
     return (
         <aside className="kanban-details" aria-label="Card details">
             <header className="kanban-details-header">
@@ -1203,13 +1280,17 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
             </header>
             <div className="kanban-details-body">
                 <section className="kanban-detail-section">
-                    <h4>Due Date</h4>
-                    <div className="kanban-detail-control kanban-date-control">
-                        <button type="button" className="kanban-date-picker-trigger" aria-label="Choose due date" onClick={openDueDatePicker}>
-                            <CalendarDays size={14} />
-                        </button>
-                        <input ref={dueDateInputRef} aria-label="Due date" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
-                    </div>
+                    <h4>Date Range</h4>
+                    <DateRangePicker
+                        className="kanban-detail-control kanban-date-control"
+                        ariaLabel="Choose date range"
+                        startDate={startDate}
+                        endDate={endDate}
+                        onChange={(nextStartDate, nextEndDate) => {
+                            setStartDate(nextStartDate);
+                            setEndDate(nextEndDate);
+                        }}
+                    />
                 </section>
                 <section className="kanban-detail-section">
                     <h4>Category</h4>
@@ -1457,7 +1538,8 @@ function cardDetailsSnapshot(value: {
     title: string;
     columnId: string;
     priority: KanbanPriority;
-    dueDate: string;
+    startDate: number | null;
+    endDate: number | null;
     descriptionJson?: KanbanRichTextDocument;
     descriptionText: string;
     subtasks: KanbanSubtask[];
@@ -1470,23 +1552,80 @@ function randomLabelColor(index: number): string {
     return ["#756858", "#6f7a43", "#b36a3c", "#8f6f4f", "#9a5f54"][index % 5] ?? "#756858";
 }
 
-function dateInputValue(timestamp: number): string {
-    const date = new Date(timestamp);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
+interface CalendarCell {
+    day: number;
+    month: number;
+    year: number;
+    otherMonth: boolean;
 }
 
-function dateInputTimestamp(value: string): number | null {
-    if (!value) return null;
-    const [year, month, day] = value.split("-").map(Number);
-    if (!year || !month || !day) return null;
-    return new Date(year, month - 1, day).getTime();
+export function normalizeDateRange(startDate: number, endDate: number): { startDate: number; endDate: number } {
+    return startDate <= endDate ? { startDate, endDate } : { startDate: endDate, endDate: startDate };
+}
+
+function calendarCells(year: number, month: number): CalendarCell[] {
+    const cells: CalendarCell[] = [];
+    const firstWeekday = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const previousMonthDays = new Date(year, month, 0).getDate();
+
+    for (let index = firstWeekday - 1; index >= 0; index -= 1) {
+        const date = new Date(year, month - 1, previousMonthDays - index);
+        cells.push({ day: date.getDate(), month: date.getMonth(), year: date.getFullYear(), otherMonth: true });
+    }
+    for (let day = 1; day <= daysInMonth; day += 1) {
+        cells.push({ day, month, year, otherMonth: false });
+    }
+    while (cells.length % 7 !== 0) {
+        const date = new Date(year, month + 1, cells.length - firstWeekday - daysInMonth + 1);
+        cells.push({ day: date.getDate(), month: date.getMonth(), year: date.getFullYear(), otherMonth: true });
+    }
+
+    return cells;
+}
+
+function dateOnlyTimestamp(year: number, month: number, day: number): number {
+    return new Date(year, month, day).getTime();
+}
+
+function todayTimestamp(): number {
+    const today = new Date();
+    return dateOnlyTimestamp(today.getFullYear(), today.getMonth(), today.getDate());
 }
 
 function formatDisplayDate(timestamp: number): string {
     return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatDisplayDateWithYear(timestamp: number): string {
+    return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function cardStartDate(card: KanbanCard): number | undefined {
+    return card.startDate ?? card.dueDate;
+}
+
+function cardEndDate(card: KanbanCard): number | undefined {
+    return card.endDate ?? (card.startDate === undefined ? card.dueDate : undefined);
+}
+
+function formatCardDateRange(card: KanbanCard): string {
+    return formatDateRange(cardStartDate(card), cardEndDate(card));
+}
+
+export function formatDateRange(startDate?: number, endDate?: number): string {
+    if (startDate === undefined && endDate === undefined) return "No date";
+    const start = startDate ?? endDate;
+    const end = endDate ?? startDate;
+    if (start === undefined || end === undefined) return "No date";
+    if (start === end) return formatDisplayDate(start);
+
+    const startYear = new Date(start).getFullYear();
+    const endYear = new Date(end).getFullYear();
+    const currentYear = new Date().getFullYear();
+    if (startYear !== endYear) return `${formatDisplayDateWithYear(start)} - ${formatDisplayDateWithYear(end)}`;
+    if (endYear !== currentYear) return `${formatDisplayDate(start)} - ${formatDisplayDateWithYear(end)}`;
+    return `${formatDisplayDate(start)} - ${formatDisplayDate(end)}`;
 }
 
 function errorMessage(error: unknown): string {
