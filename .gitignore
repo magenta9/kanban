@@ -4,3 +4,20 @@ packages/*/dist/
 packages/*/*.tsbuildinfo
 release-electron/
 .DS_Store
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.crt
+*.keystore
+*.jks
+*.mobileprovision
+*.provisionprofile
+secrets/
+.secrets/
