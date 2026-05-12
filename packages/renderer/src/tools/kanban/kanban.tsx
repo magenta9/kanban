@@ -498,7 +498,7 @@ export function KanbanPage(): JSX.Element {
             return {
                 columnId,
                 index: targetCards.length,
-                ...(lastCard ? { afterId: lastCard.id } : {})
+                ...(lastCard ? { beforeId: lastCard.id } : {})
             };
         }
 
@@ -520,7 +520,7 @@ export function KanbanPage(): JSX.Element {
         return {
             columnId: overCard.columnId,
             index: targetIndex,
-            ...(placeBefore ? { beforeId: overCard.id } : { afterId: overCard.id })
+            ...(placeBefore ? { afterId: overCard.id } : { beforeId: overCard.id })
         };
     }
 
@@ -599,6 +599,7 @@ export function KanbanPage(): JSX.Element {
                                                 onArchiveCard={(cardId) => void archiveCard(cardId)}
                                                 onDeleteCard={(cardId) => void deleteCard(cardId)}
                                                 onRename={() => void renameColumn(column)}
+                                                onArchive={() => void archiveColumn(column)}
                                                 dropTarget={activeDraggingCard && cardDropTarget?.columnId === column.id ? cardDropTarget : null}
                                             />
                                         ))}
@@ -868,6 +869,7 @@ function SortableColumn({
     onArchiveCard,
     onDeleteCard,
     onRename,
+    onArchive,
     dropTarget
 }: {
     column: KanbanColumn;
@@ -884,6 +886,7 @@ function SortableColumn({
     onArchiveCard: (id: string) => void;
     onDeleteCard: (id: string) => void;
     onRename: () => void;
+    onArchive: () => void;
     dropTarget: CardDropTarget | null;
 }): JSX.Element {
     const { attributes, isDragging, isOver, listeners, setNodeRef, transform, transition } = useSortable({ id: `column:${column.id}` });
@@ -897,6 +900,7 @@ function SortableColumn({
                     <strong>{column.name}</strong>
                 </div>
                 <button type="button" className="kanban-column-rename" onClick={onRename} aria-label={`Rename ${column.name}`}><Pencil size={13} /></button>
+                <button type="button" className="kanban-column-archive" onClick={onArchive} aria-label={`Archive ${column.name}`}><Archive size={13} /></button>
                 <span className="kanban-column-count">{cards.length}</span>
             </header>
             <SortableContext items={cards.map((card) => `card:${card.id}`)} strategy={verticalListSortingStrategy}>

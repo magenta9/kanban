@@ -294,16 +294,6 @@ textarea {
   color: var(--app-text);
 }
 
-* {
-  scrollbar-width: none;
-}
-
-::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
-}
-
 @media (prefers-reduced-motion: reduce) {
 
   *,
@@ -764,7 +754,14 @@ textarea {
   gap: 12px;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
   padding: 12px;
+}
+
+.kanban-board-canvas::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .kanban-column {
@@ -849,8 +846,17 @@ textarea {
   transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
+.kanban-column-archive {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-3px);
+  transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
 .kanban-column header:hover .kanban-column-rename,
-.kanban-column header:focus-within .kanban-column-rename {
+.kanban-column header:hover .kanban-column-archive,
+.kanban-column header:focus-within .kanban-column-rename,
+.kanban-column header:focus-within .kanban-column-archive {
   opacity: 1;
   pointer-events: auto;
   transform: translateX(0);
