@@ -108,6 +108,7 @@ enum HelperError: Error {
     case unknownCommand(String)
     case signedOut(String)
     case missingCloudKitEntitlement
+    case missingAppleSignature
 }
 
 func hasCloudKitEntitlement() -> Bool {
@@ -117,6 +118,27 @@ func hasCloudKitEntitlement() -> Bool {
         return false
     }
     return services.contains("CloudKit")
+}
+
+func hasAppleSigningCertificate() -> Bool {
+    var code: SecCode?
+    guard SecCodeCopySelf([], &code) == errSecSuccess, let code else {
+        return false
+    }
+
+    var staticCode: SecStaticCode?
+    guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else {
+        return false
+    }
+
+    var information: CFDictionary?
+    guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+          let dictionary = information as? [String: Any],
+          let certificates = dictionary[kSecCodeInfoCertificates as String] as? [SecCertificate] else {
+        return false
+    }
+
+    return !certificates.isEmpty
 }
 
 func container(for payload: HelperPayload?) -> CKContainer {
@@ -249,6 +271,13 @@ func handle(_ request: HelperRequest) async throws -> any Encodable {
         throw HelperError.missingCloudKitEntitlement
     }
 
+    guard hasAppleSigningCertificate() else {
+        if request.command == "accountStatus" {
+            return AccountStatusResult(accountStatus: "unavailable")
+        }
+        throw HelperError.missingAppleSignature
+    }
+
     let cloudContainer = container(for: request.payload)
     let status = try await accountStatus(for: cloudContainer)
     let statusValue = statusName(status)
@@ -327,6 +356,8 @@ func errorMessage(_ error: Error) -> String {
         return "CloudKit account is not available: \(status)"
     case HelperError.missingCloudKitEntitlement:
         return "CloudKit entitlement is missing from the helper process."
+    case HelperError.missingAppleSignature:
+        return "CloudKit helper must be signed with an Apple certificate before using iCloud."
     default:
         return error.localizedDescription
     }

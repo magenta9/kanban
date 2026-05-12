@@ -229,6 +229,8 @@ CREATE TABLE IF NOT EXISTS sync_outbox (
 
 目标：把 Settings 和最小 CloudKit 同步闭环作为一个可发布版本验收。
 
+签名前提：CloudKit helper 必须使用具备 `iCloud.com.magenta9.kanban` CloudKit entitlement 的 Apple 证书和 provisioning profile 签名。electron-builder 的 ad-hoc 签名可以验证打包结构，但不能实际运行带 iCloud entitlement 的 helper；ad-hoc 包中 Settings 应显示不可用或 helper 错误，不能视为 iCloud 验收通过。
+
 发布门槛：
 
 - Settings 中开启 iCloud 后，真实启动 helper，并能完成 account check。
