@@ -10,7 +10,7 @@
     sans-serif;
   background: #fafaf8;
   color: #242424;
-  --app-titlebar-height: 34px;
+  --app-titlebar-height: 24px;
   --app-traffic-light-safe-width: 88px;
   --app-bg: #fafaf8;
   --app-bg-muted: #f3f1ed;
@@ -215,9 +215,10 @@ body {
 }
 
 .app-content {
+  display: flex;
   min-height: 0;
   overflow: hidden;
-  padding: 4px 14px 14px;
+  padding: 0 8px 8px;
 }
 
 .theme-switch {
@@ -283,25 +284,14 @@ textarea {
   color: var(--app-text);
 }
 
+* {
+  scrollbar-width: none;
+}
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 999px;
-  background: var(--app-scrollbar-thumb);
-  background-clip: content-box;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--app-scrollbar-thumb-hover);
-  background-clip: content-box;
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -348,7 +338,9 @@ textarea {
   display: grid;
   position: relative;
   grid-template-columns: 238px minmax(0, 1fr);
-  min-height: calc(100vh - var(--app-titlebar-height) - 18px);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid var(--kanban-border);
   border-radius: 10px;
@@ -764,14 +756,15 @@ textarea {
   gap: 12px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 14px;
+  padding: 12px;
 }
 
 .kanban-column {
   display: flex;
   width: 340px;
   min-width: 340px;
-  max-height: calc(100vh - 176px);
+  height: 100%;
+  min-height: 0;
   flex-direction: column;
   border: 1px solid var(--kanban-border);
   border-radius: 8px;
@@ -864,6 +857,7 @@ textarea {
 .kanban-card-stack {
   display: grid;
   min-height: 80px;
+  flex: 1;
   gap: 8px;
   overflow-y: auto;
   padding: 0 9px 9px;
@@ -900,7 +894,7 @@ textarea {
 }
 
 .kanban-column.kanban-drag-preview {
-  height: calc(100vh - 176px);
+  height: 100%;
   overflow: hidden;
   transform: rotate(0.7deg) scale(1.01);
 }
