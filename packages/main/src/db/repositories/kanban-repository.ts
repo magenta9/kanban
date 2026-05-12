@@ -54,6 +54,8 @@ interface CardRow {
     comments_json: string;
     priority: KanbanPriority;
     due_date: number | null;
+    start_date: number | null;
+    end_date: number | null;
     sort_order: number;
     created_at: number;
     updated_at: number;
@@ -257,11 +259,24 @@ export class KanbanRepository {
             throw new Error(`Invalid Kanban priority: ${nextPriority}`);
         }
         const hasDueDatePatch = Object.prototype.hasOwnProperty.call(input.patch, "dueDate");
+        const hasStartDatePatch = Object.prototype.hasOwnProperty.call(input.patch, "startDate");
+        const hasEndDatePatch = Object.prototype.hasOwnProperty.call(input.patch, "endDate");
+        const hasDateRangePatch = hasStartDatePatch || hasEndDatePatch;
+        let nextDueDate = hasDueDatePatch ? input.patch.dueDate ?? null : current.dueDate ?? null;
+        let nextStartDate = hasStartDatePatch ? input.patch.startDate ?? null : current.startDate ?? null;
+        let nextEndDate = hasEndDatePatch ? input.patch.endDate ?? null : current.endDate ?? null;
+        if (hasDueDatePatch && !hasDateRangePatch) {
+            nextStartDate = nextDueDate;
+            nextEndDate = nextDueDate;
+        }
+        if (hasDateRangePatch && !hasDueDatePatch) {
+            nextDueDate = null;
+        }
         const updatedAt = Date.now();
         this.database
             .prepare(
                 `UPDATE kanban_cards
-         SET title = ?, column_id = ?, description_json = ?, description_text = ?, subtasks_json = ?, comments_json = ?, priority = ?, due_date = ?, updated_at = ?
+         SET title = ?, column_id = ?, description_json = ?, description_text = ?, subtasks_json = ?, comments_json = ?, priority = ?, due_date = ?, start_date = ?, end_date = ?, updated_at = ?
          WHERE id = ?`
             )
             .run(
@@ -272,7 +287,9 @@ export class KanbanRepository {
                 input.patch.subtasks === undefined ? serializeSubtasks(current.subtasks) : serializeSubtasks(input.patch.subtasks),
                 input.patch.comments === undefined ? serializeComments(current.comments) : serializeComments(input.patch.comments),
                 nextPriority,
-                hasDueDatePatch ? input.patch.dueDate ?? null : current.dueDate ?? null,
+                normalizeTimestamp(nextDueDate, "dueDate"),
+                normalizeTimestamp(nextStartDate, "startDate"),
+                normalizeTimestamp(nextEndDate, "endDate"),
                 updatedAt,
                 input.id
             );
@@ -455,8 +472,8 @@ export class KanbanRepository {
         this.database
             .prepare(
                 `INSERT INTO kanban_cards
-         (id, board_id, column_id, title, description_json, description_text, subtasks_json, comments_json, priority, due_date, sort_order, created_at, updated_at, archived_at)
-         VALUES (@id, @boardId, @columnId, @title, @descriptionJson, @descriptionText, @subtasksJson, @commentsJson, @priority, @dueDate, @sortOrder, @createdAt, @updatedAt, @archivedAt)`
+         (id, board_id, column_id, title, description_json, description_text, subtasks_json, comments_json, priority, due_date, start_date, end_date, sort_order, created_at, updated_at, archived_at)
+         VALUES (@id, @boardId, @columnId, @title, @descriptionJson, @descriptionText, @subtasksJson, @commentsJson, @priority, @dueDate, @startDate, @endDate, @sortOrder, @createdAt, @updatedAt, @archivedAt)`
             )
             .run({
                 ...card,
@@ -464,7 +481,9 @@ export class KanbanRepository {
                 descriptionText: card.descriptionText ?? null,
                 subtasksJson: serializeSubtasks(card.subtasks),
                 commentsJson: serializeComments(card.comments),
-                dueDate: card.dueDate ?? null,
+                dueDate: normalizeTimestamp(card.dueDate, "dueDate"),
+                startDate: normalizeTimestamp(card.startDate ?? card.dueDate, "startDate"),
+                endDate: normalizeTimestamp(card.endDate ?? (card.startDate === undefined ? card.dueDate : undefined), "endDate"),
                 archivedAt: card.archivedAt ?? null
             });
     }
@@ -556,6 +575,8 @@ function rowToCard(row: CardRow): KanbanCard {
         comments: parseComments(row.comments_json),
         priority: row.priority,
         dueDate: row.due_date ?? undefined,
+        startDate: row.start_date ?? undefined,
+        endDate: row.end_date ?? undefined,
         sortOrder: row.sort_order,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -582,6 +603,12 @@ function normalizeName(value: string, message: string): string {
 function normalizeOptionalText(value?: string): string | undefined {
     const next = value?.trim();
     return next ? next : undefined;
+}
+
+function normalizeTimestamp(value: number | null | undefined, field: string): number | null {
+    if (value === undefined || value === null) return null;
+    if (!Number.isFinite(value)) throw new Error(`Invalid Kanban ${field}.`);
+    return Math.trunc(value);
 }
 
 function defaultColumnColor(index: number): string {

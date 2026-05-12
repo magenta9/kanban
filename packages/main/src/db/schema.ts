@@ -39,6 +39,8 @@ export function migrate(database: Database.Database): void {
       comments_json TEXT NOT NULL DEFAULT '[]',
       priority TEXT NOT NULL DEFAULT 'none',
       due_date INTEGER,
+      start_date INTEGER,
+      end_date INTEGER,
       sort_order REAL NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
@@ -64,6 +66,18 @@ export function migrate(database: Database.Database): void {
 
   ensureColumn(database, "kanban_cards", "subtasks_json", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(database, "kanban_cards", "comments_json", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(database, "kanban_cards", "start_date", "INTEGER");
+  ensureColumn(database, "kanban_cards", "end_date", "INTEGER");
+  database
+    .prepare(
+      `UPDATE kanban_cards
+       SET start_date = due_date,
+           end_date = due_date
+       WHERE due_date IS NOT NULL
+         AND start_date IS NULL
+         AND end_date IS NULL`
+    )
+    .run();
 }
 
 function ensureColumn(database: Database.Database, table: string, column: string, definition: string): void {

@@ -49,6 +49,8 @@ export interface KanbanCard {
     descriptionText?: string;
     priority: KanbanPriority;
     dueDate?: number;
+    startDate?: number;
+    endDate?: number;
     sortOrder: number;
     createdAt: number;
     updatedAt: number;
@@ -92,6 +94,8 @@ export interface KanbanCardPatch {
     descriptionText?: string;
     priority: KanbanPriority;
     dueDate?: number | null;
+    startDate?: number | null;
+    endDate?: number | null;
     subtasks?: KanbanSubtask[];
     comments?: KanbanComment[];
 }

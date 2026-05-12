@@ -78,11 +78,42 @@ describe("KanbanRepository", () => {
         expect(repository.listCards({ boardId: board.id })[0]?.comments[0]?.body).toBe("Looks ready");
     });
 
+    it("persists and clears card date ranges", () => {
+        const repository = createRepository();
+        const board = repository.createBoard({ name: "Launch" });
+        const [backlog] = repository.listColumns({ boardId: board.id });
+        const card = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Schedule" });
+
+        const legacyUpdated = repository.updateCard({ id: card.id, patch: { dueDate: 1717113600000 } });
+        expect(legacyUpdated).toMatchObject({
+            dueDate: 1717113600000,
+            startDate: 1717113600000,
+            endDate: 1717113600000
+        });
+
+        repository.updateCard({ id: card.id, patch: { startDate: 1717200000000, endDate: 1717459200000 } });
+        expect(repository.listCards({ boardId: board.id })[0]).toMatchObject({
+            dueDate: undefined,
+            startDate: 1717200000000,
+            endDate: 1717459200000
+        });
+
+        const clearedStart = repository.updateCard({ id: card.id, patch: { startDate: null } });
+        expect(clearedStart.startDate).toBeUndefined();
+        expect(clearedStart.endDate).toBe(1717459200000);
+
+        const clearedBoth = repository.updateCard({ id: card.id, patch: { startDate: null, endDate: null } });
+        expect(clearedBoth.dueDate).toBeUndefined();
+        expect(clearedBoth.startDate).toBeUndefined();
+        expect(clearedBoth.endDate).toBeUndefined();
+    });
+
     it("round-trips exported boards with labels", () => {
         const repository = createRepository();
         const board = repository.createBoard({ name: "Launch" });
         const [backlog] = repository.listColumns({ boardId: board.id });
         const card = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Design" });
+        repository.updateCard({ id: card.id, patch: { startDate: 1717200000000, endDate: 1717459200000 } });
         const label = repository.createLabel({ boardId: board.id, name: "UI", color: "#2563eb" });
         repository.setCardLabels({ cardId: card.id, labelIds: [label.id] });
 
@@ -90,7 +121,62 @@ describe("KanbanRepository", () => {
 
         expect(imported.name).toBe("Launch Copy");
         expect(repository.listColumns({ boardId: imported.id, includeArchived: true })).toHaveLength(4);
-        expect(repository.listCards({ boardId: imported.id, includeArchived: true })[0]?.labelIds).toHaveLength(1);
+        expect(repository.listCards({ boardId: imported.id, includeArchived: true })[0]).toMatchObject({
+            labelIds: [expect.any(String)],
+            startDate: 1717200000000,
+            endDate: 1717459200000
+        });
         expect(repository.listLabels({ boardId: imported.id })[0]?.name).toBe("UI");
+    });
+
+    it("backfills legacy due dates as single-day ranges", () => {
+        const database = new Database(":memory:");
+        database.exec(`
+            CREATE TABLE kanban_boards (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              description TEXT,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              archived_at INTEGER
+            );
+            CREATE TABLE kanban_columns (
+              id TEXT PRIMARY KEY,
+              board_id TEXT NOT NULL REFERENCES kanban_boards(id) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              color TEXT,
+              sort_order REAL NOT NULL,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              archived_at INTEGER
+            );
+            CREATE TABLE kanban_cards (
+              id TEXT PRIMARY KEY,
+              board_id TEXT NOT NULL REFERENCES kanban_boards(id) ON DELETE CASCADE,
+              column_id TEXT NOT NULL REFERENCES kanban_columns(id) ON DELETE RESTRICT,
+              title TEXT NOT NULL,
+              description_json TEXT,
+              description_text TEXT,
+              priority TEXT NOT NULL DEFAULT 'none',
+              due_date INTEGER,
+              sort_order REAL NOT NULL,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              archived_at INTEGER
+            );
+            INSERT INTO kanban_boards (id, name, created_at, updated_at) VALUES ('board-1', 'Legacy', 1, 1);
+            INSERT INTO kanban_columns (id, board_id, name, sort_order, created_at, updated_at) VALUES ('column-1', 'board-1', 'Todo', 1000, 1, 1);
+            INSERT INTO kanban_cards (id, board_id, column_id, title, priority, due_date, sort_order, created_at, updated_at)
+            VALUES ('card-1', 'board-1', 'column-1', 'Legacy due', 'none', 1717200000000, 1000, 1, 1);
+        `);
+
+        migrate(database);
+        const repository = new KanbanRepository(database);
+
+        expect(repository.listCards({ boardId: "board-1" })[0]).toMatchObject({
+            dueDate: 1717200000000,
+            startDate: 1717200000000,
+            endDate: 1717200000000
+        });
     });
 });

@@ -1235,7 +1235,7 @@ textarea {
   align-items: center;
   gap: 7px;
   min-height: 40px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--kanban-border);
   border-radius: 8px;
   background: var(--kanban-surface);
@@ -1333,7 +1333,7 @@ textarea {
   box-shadow: 0 0 0 3px var(--kanban-primary-soft);
 }
 
-.kanban-list-date-control button {
+.kanban-list-date-control .kanban-date-picker-trigger {
   display: inline-flex;
   width: 18px;
   height: 20px;
@@ -1346,24 +1346,8 @@ textarea {
   padding: 0;
 }
 
-.kanban-list-date-control button:hover {
+.kanban-list-date-control .kanban-date-picker-trigger:hover {
   color: var(--kanban-text);
-}
-
-.kanban-list-date-control input {
-  width: 94px;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: var(--kanban-text);
-  font-size: 11px;
-  outline: none;
-}
-
-.kanban-list-date-control input::-webkit-calendar-picker-indicator {
-  display: none;
-  -webkit-appearance: none;
 }
 
 .kanban-list-row select {
@@ -1549,12 +1533,8 @@ textarea {
 }
 
 .kanban-date-control {
+  position: relative;
   padding-left: 8px;
-}
-
-.kanban-date-control input::-webkit-calendar-picker-indicator {
-  display: none;
-  -webkit-appearance: none;
 }
 
 .kanban-date-picker-trigger {
@@ -1575,6 +1555,180 @@ textarea {
   border-color: var(--kanban-border);
   background: var(--kanban-hover-bg);
   color: var(--kanban-text);
+}
+
+.kanban-date-range-picker {
+  display: inline-flex;
+  position: relative;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.kanban-date-range-picker.compact {
+  width: 148px;
+  max-width: 100%;
+}
+
+.kanban-date-range-value {
+  display: block;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--kanban-text);
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1.2;
+  outline: none;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kanban-date-range-picker.compact .kanban-date-range-value {
+  font-size: 11px;
+}
+
+.kanban-calendar-popover {
+  position: absolute;
+  z-index: 35;
+  top: calc(100% + 7px);
+  left: 0;
+  width: 292px;
+  border: 1px solid var(--kanban-border-strong);
+  border-radius: 10px;
+  background: var(--kanban-surface);
+  padding: 14px;
+  box-shadow: var(--kanban-dialog-shadow);
+}
+
+.kanban-date-range-picker.compact .kanban-calendar-popover {
+  right: 0;
+  left: auto;
+}
+
+.kanban-calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.kanban-calendar-nav strong {
+  overflow: hidden;
+  color: var(--kanban-text);
+  font-size: 13px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kanban-calendar-nav button,
+.kanban-calendar-footer button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--kanban-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--kanban-muted);
+  padding: 0 8px;
+}
+
+.kanban-calendar-nav button {
+  width: 28px;
+  flex: 0 0 auto;
+  padding: 0;
+}
+
+.kanban-calendar-nav button:hover,
+.kanban-calendar-footer button:hover {
+  border-color: var(--kanban-primary-soft-strong);
+  background: var(--kanban-primary-soft);
+  color: var(--kanban-primary);
+}
+
+.kanban-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.kanban-calendar-weekday {
+  padding: 3px 0 7px;
+  color: var(--kanban-faint);
+  font-size: 10px;
+  font-weight: 760;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.kanban-calendar-day {
+  display: inline-grid;
+  aspect-ratio: 1;
+  min-width: 0;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kanban-text);
+  padding: 0;
+  font-size: 12px;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.kanban-calendar-day.other-month {
+  color: var(--kanban-faint);
+  opacity: 0.52;
+}
+
+.kanban-calendar-day:hover {
+  background: var(--kanban-primary-soft);
+  color: var(--kanban-primary);
+}
+
+.kanban-calendar-day.today {
+  border-color: var(--kanban-primary-soft-strong);
+  color: var(--kanban-primary);
+  font-weight: 760;
+}
+
+.kanban-calendar-day.in-range {
+  border-radius: 4px;
+  background: var(--kanban-primary-soft);
+  color: var(--kanban-primary);
+}
+
+.kanban-calendar-day.selected-start,
+.kanban-calendar-day.selected-end {
+  border-color: var(--kanban-primary);
+  background: var(--kanban-primary);
+  color: var(--kanban-invert);
+  font-weight: 760;
+}
+
+.kanban-calendar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  border-top: 1px solid var(--kanban-border);
+  padding-top: 11px;
+  color: var(--kanban-muted);
+  font-size: 11px;
+}
+
+.kanban-calendar-footer span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kanban-detail-row-action {
