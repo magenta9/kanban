@@ -786,6 +786,10 @@ textarea {
   box-shadow: inset 0 0 0 1px var(--kanban-primary-soft-strong);
 }
 
+.kanban-column.drop-target {
+  background: color-mix(in srgb, var(--kanban-primary-soft) 64%, var(--kanban-surface-soft));
+}
+
 .kanban-column.dragging {
   opacity: 0.26;
   transform-origin: center top;
@@ -887,6 +891,24 @@ textarea {
   gap: 8px;
   overflow-y: auto;
   padding: 0 9px 9px;
+}
+
+.kanban-card-stack-item {
+  display: contents;
+}
+
+.kanban-card-drop-indicator {
+  display: block;
+  width: 320px;
+  min-width: 320px;
+  max-width: 320px;
+  height: 168px;
+  min-height: 168px;
+  max-height: 168px;
+  border: 1px dashed var(--kanban-primary-soft-strong);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--kanban-primary-soft) 68%, transparent);
+  box-shadow: inset 0 0 0 1px var(--kanban-primary-soft), 0 8px 18px rgba(117, 104, 88, 0.08);
 }
 
 .kanban-card {
