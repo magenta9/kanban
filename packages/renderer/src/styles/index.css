@@ -294,6 +294,29 @@ textarea {
   color: var(--app-text);
 }
 
+.kanban-board-canvas,
+.kanban-card-stack,
+.kanban-list-view,
+.kanban-details-body,
+.kanban-details-meta,
+.kanban-select-menu,
+.kanban-editor-content pre {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.kanban-board-canvas::-webkit-scrollbar,
+.kanban-card-stack::-webkit-scrollbar,
+.kanban-list-view::-webkit-scrollbar,
+.kanban-details-body::-webkit-scrollbar,
+.kanban-details-meta::-webkit-scrollbar,
+.kanban-select-menu::-webkit-scrollbar,
+.kanban-editor-content pre::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
 
   *,
@@ -756,12 +779,6 @@ textarea {
   overflow-y: hidden;
   scrollbar-width: none;
   padding: 12px;
-}
-
-.kanban-board-canvas::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
 }
 
 .kanban-column {
