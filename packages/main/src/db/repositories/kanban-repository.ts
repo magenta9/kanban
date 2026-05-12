@@ -535,7 +535,7 @@ export class KanbanRepository {
          VALUES (@id, @boardId, @name, @color, @sortOrder, @createdAt, @updatedAt, @archivedAt)`
             )
             .run({ ...column, color: column.color ?? null, archivedAt: column.archivedAt ?? null });
-            this.recordOutbox("column", column.id, "save", column.updatedAt);
+        this.recordOutbox("column", column.id, "save", column.updatedAt);
     }
 
     private insertCard(card: KanbanCard): void {
@@ -554,7 +554,7 @@ export class KanbanRepository {
                 dueDate: card.dueDate ?? null,
                 archivedAt: card.archivedAt ?? null
             });
-            this.recordOutbox("card", card.id, "save", card.updatedAt);
+        this.recordOutbox("card", card.id, "save", card.updatedAt);
     }
 
     private nextColumnOrder(boardId: string): number {
