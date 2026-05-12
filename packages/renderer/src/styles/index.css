@@ -478,7 +478,6 @@ textarea {
   display: flex;
   min-height: 0;
   flex-direction: column;
-  border-right: 1px solid var(--kanban-border);
   background: var(--kanban-surface-soft);
   padding: 12px;
 }
@@ -681,7 +680,6 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-bottom: 1px solid var(--kanban-border);
   background: var(--kanban-surface-quiet);
   padding: 9px 12px;
 }
