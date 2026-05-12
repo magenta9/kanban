@@ -1,6 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
   <title id="title">Kanban</title>
-  <path fill="#d6ad4a" d="M355 606 220 512l135-94 48 69-36 25 36 25-48 69Zm314 0-48-69 36-25-36-25 48-69 135 94-135 94Z"/>
-  <path fill="#d6ad4a" d="M457 708h-84l194-392h84L457 708Z"/>
-  <circle cx="512" cy="512" r="62" fill="#d6ad4a"/>
+  <rect width="1024" height="1024" fill="none"/>
+  <rect x="128" y="128" width="768" height="768" rx="188" fill="#fffdfa"/>
+  <rect x="232" y="260" width="156" height="504" rx="48" fill="#f3ead0"/>
+  <rect x="434" y="260" width="156" height="504" rx="48" fill="#d9b44d"/>
+  <rect x="636" y="260" width="156" height="504" rx="48" fill="#c37a45"/>
+  <rect x="264" y="316" width="92" height="96" rx="24" fill="#315f55"/>
+  <rect x="264" y="448" width="92" height="164" rx="28" fill="#9bbeb0"/>
+  <rect x="264" y="648" width="92" height="60" rx="20" fill="#d9b44d"/>
+  <rect x="466" y="316" width="92" height="132" rx="28" fill="#fff4d7"/>
+  <rect x="466" y="484" width="92" height="80" rx="24" fill="#8f6f32"/>
+  <rect x="466" y="600" width="92" height="108" rx="28" fill="#f3d778"/>
+  <rect x="668" y="316" width="92" height="76" rx="24" fill="#ffe3b5"/>
+  <rect x="668" y="428" width="92" height="148" rx="28" fill="#733f2a"/>
+  <rect x="668" y="612" width="92" height="96" rx="26" fill="#f1c18a"/>
 </svg>

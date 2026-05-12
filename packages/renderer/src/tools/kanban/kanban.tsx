@@ -1195,7 +1195,10 @@ function RichTextEditor({ value, onChange }: { value?: KanbanRichTextDocument; o
 
     useEffect(() => {
         if (!editor) return;
-        editor.commands.setContent((value as JSONContent | undefined) ?? { type: "doc", content: [{ type: "paragraph" }] });
+        const newValue = (value as JSONContent | undefined) ?? { type: "doc", content: [{ type: "paragraph" }] };
+        if (shouldSyncRichTextEditorContent(editor.isFocused, editor.getJSON(), newValue)) {
+            editor.commands.setContent(newValue, { emitUpdate: false });
+        }
     }, [editor, value]);
 
     return (
@@ -1203,6 +1206,11 @@ function RichTextEditor({ value, onChange }: { value?: KanbanRichTextDocument; o
             <EditorContent editor={editor} />
         </div>
     );
+}
+
+export function shouldSyncRichTextEditorContent(isFocused: boolean, currentValue: JSONContent, nextValue: JSONContent): boolean {
+    if (isFocused) return false;
+    return JSON.stringify(currentValue) !== JSON.stringify(nextValue);
 }
 
 function PriorityBadge({ priority }: { priority: KanbanPriority }): JSX.Element {
