@@ -4,9 +4,13 @@ import { migrate } from "../schema";
 import { KanbanRepository, orderBetween } from "./kanban-repository";
 
 function createRepository(): KanbanRepository {
+    return createRepositoryWithDatabase().repository;
+}
+
+function createRepositoryWithDatabase(): { database: Database.Database; repository: KanbanRepository } {
     const database = new Database(":memory:");
     migrate(database);
-    return new KanbanRepository(database);
+    return { database, repository: new KanbanRepository(database) };
 }
 
 describe("KanbanRepository", () => {
@@ -92,5 +96,52 @@ describe("KanbanRepository", () => {
         expect(repository.listColumns({ boardId: imported.id, includeArchived: true })).toHaveLength(4);
         expect(repository.listCards({ boardId: imported.id, includeArchived: true })[0]?.labelIds).toHaveLength(1);
         expect(repository.listLabels({ boardId: imported.id })[0]?.name).toBe("UI");
+    });
+
+    it("records local writes in the sync outbox", () => {
+        const { database, repository } = createRepositoryWithDatabase();
+        const board = repository.createBoard({ name: "Launch" });
+        const [backlog] = repository.listColumns({ boardId: board.id });
+        const card = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Design" });
+        const label = repository.createLabel({ boardId: board.id, name: "UI", color: "#2563eb" });
+        repository.setCardLabels({ cardId: card.id, labelIds: [label.id] });
+
+        const rows = database.prepare("SELECT entity_type, operation FROM sync_outbox ORDER BY created_at ASC").all();
+
+        expect(rows).toEqual(
+            expect.arrayContaining([
+                { entity_type: "board", operation: "save" },
+                { entity_type: "column", operation: "save" },
+                { entity_type: "card", operation: "save" },
+                { entity_type: "label", operation: "save" },
+                { entity_type: "card_label", operation: "save" }
+            ])
+        );
+    });
+
+    it("records tombstones and delete outbox entries for deleted cards", () => {
+        const { database, repository } = createRepositoryWithDatabase();
+        const board = repository.createBoard({ name: "Launch" });
+        const [backlog] = repository.listColumns({ boardId: board.id });
+        const card = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Design" });
+        const label = repository.createLabel({ boardId: board.id, name: "UI", color: "#2563eb" });
+        repository.setCardLabels({ cardId: card.id, labelIds: [label.id] });
+        database.prepare("DELETE FROM sync_outbox").run();
+
+        repository.deleteCard({ id: card.id });
+
+        expect(repository.listCards({ boardId: board.id, includeArchived: true })).toHaveLength(0);
+        expect(database.prepare("SELECT entity_type, entity_id FROM sync_tombstones ORDER BY entity_type").all()).toEqual(
+            expect.arrayContaining([
+                { entity_type: "card", entity_id: card.id },
+                { entity_type: "card_label", entity_id: `${card.id}:${label.id}` }
+            ])
+        );
+        expect(database.prepare("SELECT entity_type, operation FROM sync_outbox ORDER BY created_at ASC").all()).toEqual(
+            expect.arrayContaining([
+                { entity_type: "card", operation: "delete" },
+                { entity_type: "card_label", operation: "delete" }
+            ])
+        );
     });
 });

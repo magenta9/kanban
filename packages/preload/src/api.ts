@@ -16,6 +16,10 @@ export const api: IpcContract = {
     getSettings: () => ipcRenderer.invoke(ipcChannels.settings.getSettings),
     updateSettings: (input) => ipcRenderer.invoke(ipcChannels.settings.updateSettings, input)
   },
+  sync: {
+    getStatus: () => ipcRenderer.invoke(ipcChannels.sync.getStatus),
+    syncNow: () => ipcRenderer.invoke(ipcChannels.sync.syncNow)
+  },
   kanban: {
     listBoards: () => ipcRenderer.invoke(ipcChannels.kanban.listBoards),
     createBoard: (input) => ipcRenderer.invoke(ipcChannels.kanban.createBoard, input),

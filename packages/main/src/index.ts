@@ -5,6 +5,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { openKanbanDatabase } from "./db/services";
 import { KanbanRepository } from "./db/repositories/kanban-repository";
 import { SettingsRepository } from "./db/repositories/settings-repository";
+import { SyncService } from "./sync/sync-service";
 import { resolveKanbanPaths } from "./storage/path-service";
 import { registerIpc } from "./ipc/register";
 
@@ -90,9 +91,11 @@ app.whenReady().then(async () => {
   const paths = resolveKanbanPaths();
   mkdirSync(paths.root, { recursive: true });
   const database = openKanbanDatabase(paths.databasePath);
+  const settings = new SettingsRepository(database);
   registerIpc({
     kanban: new KanbanRepository(database),
-    settings: new SettingsRepository(database)
+    settings,
+    sync: new SyncService(database, settings)
   });
 
   await createWindow();

@@ -9,6 +9,10 @@ export const ipcChannels = {
     getSettings: "settings:get-settings",
     updateSettings: "settings:update-settings"
   },
+  sync: {
+    getStatus: "sync:get-status",
+    syncNow: "sync:sync-now"
+  },
   kanban: {
     listBoards: "kanban:list-boards",
     createBoard: "kanban:create-board",

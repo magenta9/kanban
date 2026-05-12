@@ -15,6 +15,7 @@ export function allDeclaredInvokeChannels(): string[] {
   return [
     ipcChannels.system.getStatus,
     ...Object.values(ipcChannels.settings),
+    ...Object.values(ipcChannels.sync),
     ...Object.values(ipcChannels.kanban)
   ];
 }

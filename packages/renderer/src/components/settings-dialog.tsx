@@ -1,11 +1,13 @@
 import { Cloud, Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AppSettings } from "@kanban/shared";
+import type { AppSettings, SyncStatus, SyncStatusState } from "@kanban/shared";
 import { getApi } from "../api";
 
 export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element | null {
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -13,16 +15,19 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
     let isMounted = true;
     setError(null);
     try {
-      void getApi()
-        .settings.getSettings()
-        .then((nextSettings) => {
-          if (isMounted) setSettings(nextSettings);
+      const api = getApi();
+      void Promise.all([api.settings.getSettings(), api.sync.getStatus()])
+        .then(([nextSettings, nextSyncStatus]) => {
+          if (!isMounted) return;
+          setSettings(nextSettings);
+          setSyncStatus(nextSyncStatus);
         })
         .catch((unknownError) => {
           if (isMounted) setError(errorMessage(unknownError));
         });
     } catch (unknownError) {
       setSettings(null);
+      setSyncStatus(null);
       setError(errorMessage(unknownError));
     }
     return () => {
@@ -47,12 +52,26 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
     setIsSaving(true);
     setError(null);
     try {
-      const nextSettings = await getApi().settings.updateSettings({ sync: { iCloudEnabled: nextEnabled } });
+      const api = getApi();
+      const nextSettings = await api.settings.updateSettings({ sync: { iCloudEnabled: nextEnabled } });
       setSettings(nextSettings);
+      setSyncStatus(await api.sync.getStatus());
     } catch (unknownError) {
       setError(errorMessage(unknownError));
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function syncNow(): Promise<void> {
+    setIsSyncing(true);
+    setError(null);
+    try {
+      setSyncStatus(await getApi().sync.syncNow());
+    } catch (unknownError) {
+      setError(errorMessage(unknownError));
+    } finally {
+      setIsSyncing(false);
     }
   }
 
@@ -88,8 +107,22 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           </div>
           <div className="settings-status-line">
             {isSaving ? <Loader2 size={13} className="settings-spin" /> : null}
-            <span>{iCloudEnabled ? "On" : "Local only"}</span>
+            <span>{syncStatus ? syncStatusLabel(syncStatus.state) : iCloudEnabled ? "On" : "Local only"}</span>
           </div>
+          <div className="settings-sync-details">
+            <span>{syncStatus?.accountStatus ? `Account: ${accountStatusLabel(syncStatus.accountStatus)}` : "Account: Unknown"}</span>
+            <span>{syncStatus?.lastSyncedAt ? `Last synced: ${new Date(syncStatus.lastSyncedAt).toLocaleString()}` : "Last synced: Never"}</span>
+            <span>{syncStatus ? `Pending: ${syncStatus.pendingChangeCount}` : "Pending: 0"}</span>
+          </div>
+          <button
+            type="button"
+            className="settings-secondary-button"
+            disabled={!iCloudEnabled || !settings || isSaving || isSyncing}
+            onClick={() => void syncNow()}
+          >
+            {isSyncing ? <Loader2 size={13} className="settings-spin" /> : null}
+            <span>Sync Now</span>
+          </button>
         </div>
 
         {error ? <div className="settings-error">{error}</div> : null}
@@ -100,4 +133,36 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Settings are unavailable.";
+}
+
+function syncStatusLabel(state: SyncStatusState): string {
+  switch (state) {
+    case "localOnly":
+      return "Local only";
+    case "checking":
+      return "Checking iCloud";
+    case "syncing":
+      return "Syncing";
+    case "upToDate":
+      return "Up to date";
+    case "paused":
+      return "Paused";
+    case "error":
+      return "Error";
+  }
+}
+
+function accountStatusLabel(status: SyncStatus["accountStatus"]): string {
+  switch (status) {
+    case "unknown":
+      return "Unknown";
+    case "unavailable":
+      return "Unavailable";
+    case "signedOut":
+      return "Signed out";
+    case "signedIn":
+      return "Signed in";
+    case "changedAccount":
+      return "Changed account";
+  }
 }

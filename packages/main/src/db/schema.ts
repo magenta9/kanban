@@ -66,6 +66,45 @@ export function migrate(database: Database.Database): void {
       value_json TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS sync_state (
+      key TEXT PRIMARY KEY,
+      value BLOB NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS sync_outbox (
+      id TEXT PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      operation TEXT NOT NULL CHECK (operation IN ('save', 'delete')),
+      changed_fields_json TEXT,
+      created_at INTEGER NOT NULL,
+      device_id TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sync_outbox_created_at
+      ON sync_outbox(created_at);
+
+    CREATE TABLE IF NOT EXISTS sync_tombstones (
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      deleted_at INTEGER NOT NULL,
+      device_id TEXT NOT NULL,
+      PRIMARY KEY (entity_type, entity_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ck_record_metadata (
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      record_name TEXT NOT NULL,
+      metadata BLOB NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (entity_type, entity_id),
+      UNIQUE (record_name)
+    );
   `);
 
   ensureColumn(database, "kanban_cards", "subtasks_json", "TEXT NOT NULL DEFAULT '[]'");

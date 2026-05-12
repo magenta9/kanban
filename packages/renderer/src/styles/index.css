@@ -467,6 +467,48 @@ body {
   font-size: 12px;
 }
 
+.settings-sync-details {
+  display: grid;
+  gap: 4px;
+  margin-top: 9px;
+  padding-left: 37px;
+  color: var(--ui-text-faint);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.settings-secondary-button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 12px;
+  margin-left: 37px;
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: var(--ui-control-bg);
+  color: var(--ui-text);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+  transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
+}
+
+.settings-secondary-button:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-control-bg-hover);
+}
+
+.settings-secondary-button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.settings-secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .settings-spin {
   animation: settings-spin 0.9s linear infinite;
 }
