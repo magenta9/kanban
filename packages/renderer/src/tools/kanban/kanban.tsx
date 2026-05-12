@@ -136,7 +136,10 @@ export function KanbanPage(): JSX.Element {
     );
     const selectedBoard = boards.find((board) => board.id === selectedBoardId);
     const selectedCard = cards.find((card) => card.id === selectedCardId);
-    const visibleColumns = columns.filter((column) => !column.archivedAt).sort((left, right) => left.sortOrder - right.sortOrder);
+    const visibleColumns = useMemo(
+        () => columns.filter((column) => !column.archivedAt).sort((left, right) => left.sortOrder - right.sortOrder),
+        [columns]
+    );
     const activeCards = cards.filter((card) => !card.archivedAt);
     const archivedCards = cards.filter((card) => card.archivedAt);
     const activeDraggingCard = activeDragId?.startsWith("card:") ? cards.find((card) => card.id === activeDragId.slice(5)) : undefined;
@@ -363,47 +366,64 @@ export function KanbanPage(): JSX.Element {
                 return;
             }
 
-            event.preventDefault();
-
             if (action.type === "openHelp") {
+                event.preventDefault();
                 setHelpOpen(true);
                 return;
             }
 
             if (action.type === "close") {
-                if (helpOpen) setHelpOpen(false);
-                else if (textDialog) setTextDialog(null);
-                else if (confirmDialog) setConfirmDialog(null);
+                if (helpOpen) {
+                    event.preventDefault();
+                    setHelpOpen(false);
+                }
+                else if (textDialog) {
+                    event.preventDefault();
+                    setTextDialog(null);
+                }
+                else if (confirmDialog) {
+                    event.preventDefault();
+                    setConfirmDialog(null);
+                }
                 else if (activeComposerColumnId) {
+                    event.preventDefault();
                     setDraftCardTitle(activeComposerColumnId, "");
                     setActiveComposerColumnId("");
                 }
-                else if (selectedCardId) setSelectedCardId("");
+                else if (selectedCardId) {
+                    event.preventDefault();
+                    setSelectedCardId("");
+                }
                 return;
             }
 
             if (action.type === "selectBoardByIndex") {
+                event.preventDefault();
                 const board = boards[action.index];
                 if (board && board.id !== selectedBoardId) void selectBoard(board.id);
                 return;
             }
 
             if (action.type === "toggleBoardList") {
+                event.preventDefault();
                 setBoardListCollapsed((current) => !current);
                 return;
             }
 
             if (action.type === "setView") {
+                event.preventDefault();
                 setView(action.view);
                 return;
             }
 
             if (action.type === "createCard") {
+                event.preventDefault();
                 openCardComposerFromShortcut();
                 return;
             }
 
             if (action.type === "createColumn") {
+                event.preventDefault();
                 createColumn();
             }
         }
