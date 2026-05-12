@@ -16,13 +16,93 @@ interface SyncStateRow {
     value: Buffer;
 }
 
+interface SyncHelper {
+    getAccountStatus(): Promise<{ accountStatus: SyncStatus["accountStatus"] }>;
+    syncNow(): Promise<{ accountStatus: SyncStatus["accountStatus"] }>;
+}
+
 export class SyncService {
     constructor(
         private readonly database: Database.Database,
-        private readonly settings: SettingsRepository
+        private readonly settings: SettingsRepository,
+        private readonly helper?: SyncHelper
     ) { }
 
-    getStatus(): SyncStatus {
+    async getStatus(): Promise<SyncStatus> {
+        const settings = this.settings.getSettings();
+        const pendingChangeCount = this.pendingChangeCount();
+        if (!settings.sync.iCloudEnabled) {
+            return {
+                state: "localOnly",
+                iCloudEnabled: false,
+                accountStatus: "unknown",
+                lastSyncedAt: this.readNumber(syncStateKeys.lastSyncedAt),
+                pendingChangeCount
+            };
+        }
+
+        if (!this.helper) {
+            return {
+                state: "error",
+                iCloudEnabled: true,
+                accountStatus: "unavailable",
+                lastSyncedAt: this.readNumber(syncStateKeys.lastSyncedAt),
+                pendingChangeCount,
+                error: "CloudKit helper is not configured."
+            };
+        }
+
+        try {
+            const result = await this.helper.getAccountStatus();
+            return {
+                state: result.accountStatus === "signedIn" ? "upToDate" : "paused",
+                iCloudEnabled: true,
+                accountStatus: result.accountStatus,
+                lastSyncedAt: this.readNumber(syncStateKeys.lastSyncedAt),
+                pendingChangeCount
+            };
+        } catch (error) {
+            return {
+                state: "error",
+                iCloudEnabled: true,
+                accountStatus: "unavailable",
+                lastSyncedAt: this.readNumber(syncStateKeys.lastSyncedAt),
+                pendingChangeCount,
+                error: errorMessage(error)
+            };
+        }
+    }
+
+    async syncNow(): Promise<SyncStatus> {
+        const settings = this.settings.getSettings();
+        if (!settings.sync.iCloudEnabled || !this.helper) {
+            return await this.getStatus();
+        }
+
+        try {
+            const result = await this.helper.syncNow();
+            const syncedAt = Date.now();
+            this.writeState(syncStateKeys.lastSyncedAt, String(syncedAt), syncedAt);
+            return {
+                state: "upToDate",
+                iCloudEnabled: true,
+                accountStatus: result.accountStatus,
+                lastSyncedAt: syncedAt,
+                pendingChangeCount: this.pendingChangeCount()
+            };
+        } catch (error) {
+            return {
+                state: "error",
+                iCloudEnabled: true,
+                accountStatus: "unavailable",
+                lastSyncedAt: this.readNumber(syncStateKeys.lastSyncedAt),
+                pendingChangeCount: this.pendingChangeCount(),
+                error: errorMessage(error)
+            };
+        }
+    }
+
+    getLocalStatus(): SyncStatus {
         const settings = this.settings.getSettings();
         const pendingChangeCount = this.pendingChangeCount();
         if (!settings.sync.iCloudEnabled) {
@@ -42,10 +122,6 @@ export class SyncService {
             lastSyncedAt: this.readNumber(syncStateKeys.lastSyncedAt),
             pendingChangeCount
         };
-    }
-
-    syncNow(): SyncStatus {
-        return this.getStatus();
     }
 
     ensureDeviceId(): string {
@@ -83,4 +159,8 @@ export class SyncService {
             )
             .run(key, Buffer.from(value, "utf8"), updatedAt);
     }
+}
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }

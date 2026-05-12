@@ -13,25 +13,44 @@ function createService(): { settings: SettingsRepository; sync: SyncService } {
 }
 
 describe("SyncService", () => {
-    it("reports local-only status by default", () => {
+    it("reports local-only status by default", async () => {
         const { sync } = createService();
 
-        expect(sync.getStatus()).toMatchObject({
+        await expect(sync.getStatus()).resolves.toMatchObject({
             state: "localOnly",
             iCloudEnabled: false,
             pendingChangeCount: 0
         });
     });
 
-    it("reports checking status when iCloud is enabled", () => {
+    it("reports helper account status when iCloud is enabled", async () => {
+        const database = new Database(":memory:");
+        migrate(database);
+        const settings = new SettingsRepository(database);
+        const sync = new SyncService(database, settings, {
+            getAccountStatus: async () => ({ accountStatus: "signedIn" }),
+            syncNow: async () => ({ accountStatus: "signedIn" })
+        });
+
+        settings.updateSettings({ sync: { iCloudEnabled: true } });
+
+        await expect(sync.getStatus()).resolves.toMatchObject({
+            state: "upToDate",
+            iCloudEnabled: true,
+            accountStatus: "signedIn",
+            pendingChangeCount: 0
+        });
+    });
+
+    it("reports an error when iCloud is enabled without a helper", async () => {
         const { settings, sync } = createService();
 
         settings.updateSettings({ sync: { iCloudEnabled: true } });
 
-        expect(sync.getStatus()).toMatchObject({
-            state: "checking",
+        await expect(sync.getStatus()).resolves.toMatchObject({
+            state: "error",
             iCloudEnabled: true,
-            pendingChangeCount: 0
+            accountStatus: "unavailable"
         });
     });
 
