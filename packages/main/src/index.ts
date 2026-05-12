@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron";
+import { ipcChannels } from "@kanban/shared";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { openKanbanDatabase } from "./db/services";
@@ -36,7 +37,20 @@ function configureApplicationMenu(): void {
     },
     { role: "editMenu" },
     { role: "viewMenu" },
-    { role: "windowMenu" }
+    { role: "windowMenu" },
+    {
+      role: "help",
+      submenu: [
+        {
+          label: "Keyboard Shortcuts",
+          accelerator: "CommandOrControl+/",
+          click: () => {
+            const targetWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+            targetWindow?.webContents.send(ipcChannels.system.showKeyboardShortcuts);
+          }
+        }
+      ]
+    }
   ] satisfies MenuItemConstructorOptions[];
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -65,6 +79,10 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: false
     }
+  });
+
+  mainWindow.on("closed", () => {
+    mainWindow = null;
   });
 
   if (!app.isPackaged) {

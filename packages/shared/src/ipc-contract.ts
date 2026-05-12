@@ -19,6 +19,8 @@ export interface SystemStatus {
   userDataPath: string;
 }
 
+export type Unsubscribe = () => void;
+
 export interface IpcContract {
   system: {
     getStatus(): Promise<SystemStatus>;
@@ -49,6 +51,14 @@ export interface IpcContract {
     importBoard(input: { payload: KanbanBoardExport }): Promise<KanbanBoard>;
   };
 }
+
+export interface IpcEvents {
+  system: {
+    onShowKeyboardShortcuts(callback: () => void): Unsubscribe;
+  };
+}
+
+export type PreloadApi = IpcContract & IpcEvents;
 
 export const ipcContractHandlers = [
   "system.getStatus",

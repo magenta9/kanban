@@ -1,9 +1,14 @@
 import { ipcRenderer } from "electron";
-import { ipcChannels, type IpcContract } from "@kanban/shared";
+import { ipcChannels, type PreloadApi } from "@kanban/shared";
 
-export const api: IpcContract = {
+export const api: PreloadApi = {
   system: {
-    getStatus: () => ipcRenderer.invoke(ipcChannels.system.getStatus)
+    getStatus: () => ipcRenderer.invoke(ipcChannels.system.getStatus),
+    onShowKeyboardShortcuts: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on(ipcChannels.system.showKeyboardShortcuts, listener);
+      return () => ipcRenderer.removeListener(ipcChannels.system.showKeyboardShortcuts, listener);
+    }
   },
   kanban: {
     listBoards: () => ipcRenderer.invoke(ipcChannels.kanban.listBoards),

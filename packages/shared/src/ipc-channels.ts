@@ -1,6 +1,7 @@
 export const ipcChannels = {
   system: {
-    getStatus: "system:get-status"
+    getStatus: "system:get-status",
+    showKeyboardShortcuts: "system:show-keyboard-shortcuts"
   },
   kanban: {
     listBoards: "kanban:list-boards",
