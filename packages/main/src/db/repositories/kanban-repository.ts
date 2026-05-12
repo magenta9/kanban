@@ -22,6 +22,9 @@ import { randomUUID } from "node:crypto";
 const defaultColumns = ["Backlog", "Todo", "In Progress", "Done"];
 const validPriorities = new Set<KanbanPriority>(["none", "low", "medium", "high", "urgent"]);
 const orderStep = 1000;
+const deviceIdKey = "device_id";
+
+type SyncEntityType = "board" | "column" | "card" | "label" | "card_label";
 
 interface BoardRow {
     id: string;
@@ -100,6 +103,7 @@ export class KanbanRepository {
            VALUES (@id, @name, @description, @createdAt, @updatedAt, NULL)`
                 )
                 .run({ ...board, description: board.description ?? null });
+            this.recordOutbox("board", board.id, "save", now);
             for (const [index, columnName] of defaultColumns.entries()) {
                 this.insertColumn({
                     id: randomUUID(),
@@ -119,12 +123,35 @@ export class KanbanRepository {
     renameBoard(input: { id: string; name: string }): KanbanBoard {
         const name = normalizeName(input.name, "Board name is required.");
         const updatedAt = Date.now();
-        this.database.prepare("UPDATE kanban_boards SET name = ?, updated_at = ? WHERE id = ?").run(name, updatedAt, input.id);
+        this.database.transaction(() => {
+            this.database.prepare("UPDATE kanban_boards SET name = ?, updated_at = ? WHERE id = ?").run(name, updatedAt, input.id);
+            this.recordOutbox("board", input.id, "save", updatedAt);
+        })();
         return this.requireBoard(input.id);
     }
 
     deleteBoard(input: { id: string }): void {
+        this.requireBoard(input.id);
         this.database.transaction(() => {
+            const now = Date.now();
+            const cardLabelRows = this.database
+                .prepare(
+                    `SELECT relation.card_id, relation.label_id
+                     FROM kanban_card_labels relation
+                     JOIN kanban_cards cards ON cards.id = relation.card_id
+                     WHERE cards.board_id = ?`
+                )
+                .all(input.id) as CardLabelRow[];
+            const cardRows = this.database.prepare("SELECT id FROM kanban_cards WHERE board_id = ?").all(input.id) as Array<{ id: string }>;
+            const columnRows = this.database.prepare("SELECT id FROM kanban_columns WHERE board_id = ?").all(input.id) as Array<{ id: string }>;
+            const labelRows = this.database.prepare("SELECT id FROM kanban_labels WHERE board_id = ?").all(input.id) as Array<{ id: string }>;
+
+            for (const relation of cardLabelRows) this.recordDelete("card_label", cardLabelId(relation.card_id, relation.label_id), now);
+            for (const card of cardRows) this.recordDelete("card", card.id, now);
+            for (const column of columnRows) this.recordDelete("column", column.id, now);
+            for (const label of labelRows) this.recordDelete("label", label.id, now);
+            this.recordDelete("board", input.id, now);
+
             this.database
                 .prepare(
                     `DELETE FROM kanban_card_labels
@@ -161,8 +188,10 @@ export class KanbanRepository {
             createdAt: now,
             updatedAt: now
         };
-        this.insertColumn(column);
-        this.touchBoard(input.boardId, now);
+        this.database.transaction(() => {
+            this.insertColumn(column);
+            this.touchBoard(input.boardId, now);
+        })();
         return column;
     }
 
@@ -171,10 +200,13 @@ export class KanbanRepository {
         const nextName = input.patch.name === undefined ? current.name : normalizeName(input.patch.name, "Column name is required.");
         const nextColor = input.patch.color === undefined ? current.color : normalizeOptionalText(input.patch.color);
         const updatedAt = Date.now();
-        this.database
-            .prepare("UPDATE kanban_columns SET name = ?, color = ?, updated_at = ? WHERE id = ?")
-            .run(nextName, nextColor ?? null, updatedAt, input.id);
-        this.touchBoard(current.boardId, updatedAt);
+        this.database.transaction(() => {
+            this.database
+                .prepare("UPDATE kanban_columns SET name = ?, color = ?, updated_at = ? WHERE id = ?")
+                .run(nextName, nextColor ?? null, updatedAt, input.id);
+            this.recordOutbox("column", input.id, "save", updatedAt);
+            this.touchBoard(current.boardId, updatedAt);
+        })();
         return this.requireColumn(input.id);
     }
 
@@ -185,8 +217,11 @@ export class KanbanRepository {
         ensureSameBoard(column.boardId, before, after);
         const sortOrder = orderBetween(before?.sortOrder, after?.sortOrder);
         const updatedAt = Date.now();
-        this.database.prepare("UPDATE kanban_columns SET sort_order = ?, updated_at = ? WHERE id = ?").run(sortOrder, updatedAt, input.id);
-        this.touchBoard(column.boardId, updatedAt);
+        this.database.transaction(() => {
+            this.database.prepare("UPDATE kanban_columns SET sort_order = ?, updated_at = ? WHERE id = ?").run(sortOrder, updatedAt, input.id);
+            this.recordOutbox("column", input.id, "save", updatedAt);
+            this.touchBoard(column.boardId, updatedAt);
+        })();
         return this.requireColumn(input.id);
     }
 
@@ -199,16 +234,22 @@ export class KanbanRepository {
             throw new Error("Move or archive active cards before archiving this column.");
         }
         const now = Date.now();
-        this.database.prepare("UPDATE kanban_columns SET archived_at = ?, updated_at = ? WHERE id = ?").run(now, now, input.id);
-        this.touchBoard(column.boardId, now);
+        this.database.transaction(() => {
+            this.database.prepare("UPDATE kanban_columns SET archived_at = ?, updated_at = ? WHERE id = ?").run(now, now, input.id);
+            this.recordOutbox("column", input.id, "save", now);
+            this.touchBoard(column.boardId, now);
+        })();
         return this.requireColumn(input.id);
     }
 
     restoreColumn(input: { id: string }): KanbanColumn {
         const column = this.requireColumn(input.id);
         const now = Date.now();
-        this.database.prepare("UPDATE kanban_columns SET archived_at = NULL, updated_at = ? WHERE id = ?").run(now, input.id);
-        this.touchBoard(column.boardId, now);
+        this.database.transaction(() => {
+            this.database.prepare("UPDATE kanban_columns SET archived_at = NULL, updated_at = ? WHERE id = ?").run(now, input.id);
+            this.recordOutbox("column", input.id, "save", now);
+            this.touchBoard(column.boardId, now);
+        })();
         return this.requireColumn(input.id);
     }
 
@@ -240,8 +281,10 @@ export class KanbanRepository {
             subtasks: [],
             comments: []
         };
-        this.insertCard(card);
-        this.touchBoard(input.boardId, now);
+        this.database.transaction(() => {
+            this.insertCard(card);
+            this.touchBoard(input.boardId, now);
+        })();
         return card;
     }
 
@@ -258,47 +301,63 @@ export class KanbanRepository {
         }
         const hasDueDatePatch = Object.prototype.hasOwnProperty.call(input.patch, "dueDate");
         const updatedAt = Date.now();
-        this.database
-            .prepare(
-                `UPDATE kanban_cards
+        this.database.transaction(() => {
+            this.database
+                .prepare(
+                    `UPDATE kanban_cards
          SET title = ?, column_id = ?, description_json = ?, description_text = ?, subtasks_json = ?, comments_json = ?, priority = ?, due_date = ?, updated_at = ?
          WHERE id = ?`
-            )
-            .run(
-                input.patch.title === undefined ? current.title : normalizeName(input.patch.title, "Card title is required."),
-                nextColumnId,
-                input.patch.descriptionJson === undefined ? serializeRichText(current.descriptionJson) : serializeRichText(input.patch.descriptionJson),
-                input.patch.descriptionText === undefined ? current.descriptionText ?? null : normalizeOptionalText(input.patch.descriptionText) ?? null,
-                input.patch.subtasks === undefined ? serializeSubtasks(current.subtasks) : serializeSubtasks(input.patch.subtasks),
-                input.patch.comments === undefined ? serializeComments(current.comments) : serializeComments(input.patch.comments),
-                nextPriority,
-                hasDueDatePatch ? input.patch.dueDate ?? null : current.dueDate ?? null,
-                updatedAt,
-                input.id
-            );
-        this.touchBoard(current.boardId, updatedAt);
+                )
+                .run(
+                    input.patch.title === undefined ? current.title : normalizeName(input.patch.title, "Card title is required."),
+                    nextColumnId,
+                    input.patch.descriptionJson === undefined ? serializeRichText(current.descriptionJson) : serializeRichText(input.patch.descriptionJson),
+                    input.patch.descriptionText === undefined ? current.descriptionText ?? null : normalizeOptionalText(input.patch.descriptionText) ?? null,
+                    input.patch.subtasks === undefined ? serializeSubtasks(current.subtasks) : serializeSubtasks(input.patch.subtasks),
+                    input.patch.comments === undefined ? serializeComments(current.comments) : serializeComments(input.patch.comments),
+                    nextPriority,
+                    hasDueDatePatch ? input.patch.dueDate ?? null : current.dueDate ?? null,
+                    updatedAt,
+                    input.id
+                );
+            this.recordOutbox("card", input.id, "save", updatedAt);
+            this.touchBoard(current.boardId, updatedAt);
+        })();
         return this.requireCard(input.id);
     }
 
     deleteCard(input: { id: string }): void {
         const card = this.requireCard(input.id);
-        this.database.prepare("DELETE FROM kanban_cards WHERE id = ?").run(input.id);
-        this.touchBoard(card.boardId, Date.now());
+        this.database.transaction(() => {
+            const now = Date.now();
+            const labelRows = this.database.prepare("SELECT label_id FROM kanban_card_labels WHERE card_id = ?").all(input.id) as Array<{ label_id: string }>;
+            for (const row of labelRows) this.recordDelete("card_label", cardLabelId(input.id, row.label_id), now);
+            this.recordDelete("card", input.id, now);
+            this.database.prepare("DELETE FROM kanban_card_labels WHERE card_id = ?").run(input.id);
+            this.database.prepare("DELETE FROM kanban_cards WHERE id = ?").run(input.id);
+            this.touchBoard(card.boardId, now);
+        })();
     }
 
     archiveCard(input: { id: string }): KanbanCard {
         const card = this.requireCard(input.id);
         const now = Date.now();
-        this.database.prepare("UPDATE kanban_cards SET archived_at = ?, updated_at = ? WHERE id = ?").run(now, now, input.id);
-        this.touchBoard(card.boardId, now);
+        this.database.transaction(() => {
+            this.database.prepare("UPDATE kanban_cards SET archived_at = ?, updated_at = ? WHERE id = ?").run(now, now, input.id);
+            this.recordOutbox("card", input.id, "save", now);
+            this.touchBoard(card.boardId, now);
+        })();
         return this.requireCard(input.id);
     }
 
     restoreCard(input: { id: string }): KanbanCard {
         const card = this.requireCard(input.id);
         const now = Date.now();
-        this.database.prepare("UPDATE kanban_cards SET archived_at = NULL, updated_at = ? WHERE id = ?").run(now, input.id);
-        this.touchBoard(card.boardId, now);
+        this.database.transaction(() => {
+            this.database.prepare("UPDATE kanban_cards SET archived_at = NULL, updated_at = ? WHERE id = ?").run(now, input.id);
+            this.recordOutbox("card", input.id, "save", now);
+            this.touchBoard(card.boardId, now);
+        })();
         return this.requireCard(input.id);
     }
 
@@ -313,10 +372,13 @@ export class KanbanRepository {
         ensureSameColumn(input.toColumnId, before, after);
         const sortOrder = orderBetween(before?.sortOrder, after?.sortOrder);
         const updatedAt = Date.now();
-        this.database
-            .prepare("UPDATE kanban_cards SET column_id = ?, sort_order = ?, updated_at = ? WHERE id = ?")
-            .run(input.toColumnId, sortOrder, updatedAt, input.id);
-        this.touchBoard(card.boardId, updatedAt);
+        this.database.transaction(() => {
+            this.database
+                .prepare("UPDATE kanban_cards SET column_id = ?, sort_order = ?, updated_at = ? WHERE id = ?")
+                .run(input.toColumnId, sortOrder, updatedAt, input.id);
+            this.recordOutbox("card", input.id, "save", updatedAt);
+            this.touchBoard(card.boardId, updatedAt);
+        })();
         return this.requireCard(input.id);
     }
 
@@ -333,15 +395,26 @@ export class KanbanRepository {
             name: normalizeName(input.name, "Label name is required."),
             color: normalizeName(input.color, "Label color is required.")
         };
-        this.database.prepare("INSERT INTO kanban_labels (id, board_id, name, color) VALUES (@id, @boardId, @name, @color)").run(label);
-        this.touchBoard(input.boardId, Date.now());
+        this.database.transaction(() => {
+            const now = Date.now();
+            this.database.prepare("INSERT INTO kanban_labels (id, board_id, name, color) VALUES (@id, @boardId, @name, @color)").run(label);
+            this.recordOutbox("label", label.id, "save", now);
+            this.touchBoard(input.boardId, now);
+        })();
         return label;
     }
 
     deleteLabel(input: { id: string }): void {
         const label = this.requireLabel(input.id);
-        this.database.prepare("DELETE FROM kanban_labels WHERE id = ?").run(input.id);
-        this.touchBoard(label.boardId, Date.now());
+        this.database.transaction(() => {
+            const now = Date.now();
+            const relationRows = this.database.prepare("SELECT card_id FROM kanban_card_labels WHERE label_id = ?").all(input.id) as Array<{ card_id: string }>;
+            for (const row of relationRows) this.recordDelete("card_label", cardLabelId(row.card_id, input.id), now);
+            this.recordDelete("label", input.id, now);
+            this.database.prepare("DELETE FROM kanban_card_labels WHERE label_id = ?").run(input.id);
+            this.database.prepare("DELETE FROM kanban_labels WHERE id = ?").run(input.id);
+            this.touchBoard(label.boardId, now);
+        })();
     }
 
     setCardLabels(input: { cardId: string; labelIds: string[] }): void {
@@ -351,13 +424,20 @@ export class KanbanRepository {
             throw new Error("Labels must belong to the card board.");
         }
         this.database.transaction(() => {
+            const now = Date.now();
+            const existingRows = this.database.prepare("SELECT label_id FROM kanban_card_labels WHERE card_id = ?").all(input.cardId) as Array<{ label_id: string }>;
+            const nextIds = new Set(input.labelIds);
+            for (const row of existingRows) {
+                if (!nextIds.has(row.label_id)) this.recordDelete("card_label", cardLabelId(input.cardId, row.label_id), now);
+            }
             this.database.prepare("DELETE FROM kanban_card_labels WHERE card_id = ?").run(input.cardId);
             const insert = this.database.prepare("INSERT INTO kanban_card_labels (card_id, label_id) VALUES (?, ?)");
             for (const labelId of new Set(input.labelIds)) {
                 insert.run(input.cardId, labelId);
+                this.recordOutbox("card_label", cardLabelId(input.cardId, labelId), "save", now);
             }
+            this.touchBoard(card.boardId, now);
         })();
-        this.touchBoard(card.boardId, Date.now());
     }
 
     exportBoard(input: { boardId: string }): KanbanBoardExport {
@@ -394,13 +474,16 @@ export class KanbanRepository {
            VALUES (@id, @name, @description, @createdAt, @updatedAt, @archivedAt)`
                 )
                 .run({ ...board, description: board.description ?? null, archivedAt: board.archivedAt ?? null });
+            this.recordOutbox("board", board.id, "save", now);
             for (const column of input.payload.columns) {
                 this.insertColumn({ ...column, id: columnIds.get(column.id) ?? randomUUID(), boardId });
             }
             for (const label of input.payload.labels) {
+                const labelId = labelIds.get(label.id) ?? randomUUID();
                 this.database
                     .prepare("INSERT INTO kanban_labels (id, board_id, name, color) VALUES (@id, @boardId, @name, @color)")
-                    .run({ ...label, id: labelIds.get(label.id), boardId });
+                    .run({ ...label, id: labelId, boardId });
+                this.recordOutbox("label", labelId, "save", now);
             }
             for (const card of input.payload.cards) {
                 const nextColumnId = columnIds.get(card.columnId);
@@ -411,7 +494,10 @@ export class KanbanRepository {
             for (const relation of input.payload.cardLabels) {
                 const cardId = cardIds.get(relation.cardId);
                 const labelId = labelIds.get(relation.labelId);
-                if (cardId && labelId) insertCardLabel.run(cardId, labelId);
+                if (cardId && labelId) {
+                    insertCardLabel.run(cardId, labelId);
+                    this.recordOutbox("card_label", cardLabelId(cardId, labelId), "save", now);
+                }
             }
         })();
 
@@ -449,6 +535,7 @@ export class KanbanRepository {
          VALUES (@id, @boardId, @name, @color, @sortOrder, @createdAt, @updatedAt, @archivedAt)`
             )
             .run({ ...column, color: column.color ?? null, archivedAt: column.archivedAt ?? null });
+        this.recordOutbox("column", column.id, "save", column.updatedAt);
     }
 
     private insertCard(card: KanbanCard): void {
@@ -467,6 +554,7 @@ export class KanbanRepository {
                 dueDate: card.dueDate ?? null,
                 archivedAt: card.archivedAt ?? null
             });
+        this.recordOutbox("card", card.id, "save", card.updatedAt);
     }
 
     private nextColumnOrder(boardId: string): number {
@@ -485,6 +573,37 @@ export class KanbanRepository {
 
     private touchBoard(boardId: string, updatedAt: number): void {
         this.database.prepare("UPDATE kanban_boards SET updated_at = ? WHERE id = ?").run(updatedAt, boardId);
+        this.recordOutbox("board", boardId, "save", updatedAt);
+    }
+
+    private recordDelete(entityType: SyncEntityType, entityId: string, deletedAt: number): void {
+        const deviceId = this.ensureDeviceId();
+        this.database
+            .prepare(
+                `INSERT INTO sync_tombstones (entity_type, entity_id, deleted_at, device_id)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT(entity_type, entity_id) DO UPDATE SET deleted_at = excluded.deleted_at, device_id = excluded.device_id`
+            )
+            .run(entityType, entityId, deletedAt, deviceId);
+        this.recordOutbox(entityType, entityId, "delete", deletedAt, deviceId);
+    }
+
+    private recordOutbox(entityType: SyncEntityType, entityId: string, operation: "save" | "delete", changedAt: number, deviceId = this.ensureDeviceId()): void {
+        this.database
+            .prepare(
+                `INSERT INTO sync_outbox (id, entity_type, entity_id, operation, changed_fields_json, created_at, device_id)
+                 VALUES (?, ?, ?, ?, NULL, ?, ?)`
+            )
+            .run(randomUUID(), entityType, entityId, operation, changedAt, deviceId);
+    }
+
+    private ensureDeviceId(): string {
+        const row = this.database.prepare("SELECT value FROM sync_state WHERE key = ?").get(deviceIdKey) as { value: Buffer } | undefined;
+        if (row) return row.value.toString("utf8");
+        const now = Date.now();
+        const deviceId = randomUUID();
+        this.database.prepare("INSERT INTO sync_state (key, value, updated_at) VALUES (?, ?, ?)").run(deviceIdKey, Buffer.from(deviceId, "utf8"), now);
+        return deviceId;
     }
 
     private attachCardLabels(cards: KanbanCard[]): KanbanCard[] {
@@ -662,4 +781,8 @@ function ensureSameColumn(columnId: string, ...cards: Array<KanbanCard | undefin
     if (cards.some((card) => card && card.columnId !== columnId)) {
         throw new Error("Cards must belong to the target column.");
     }
+}
+
+function cardLabelId(cardId: string, labelId: string): string {
+    return `${cardId}:${labelId}`;
 }

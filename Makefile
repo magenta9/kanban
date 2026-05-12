@@ -4,7 +4,7 @@ DIST_DIRS := packages/shared/dist packages/preload/dist packages/main/dist packa
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install dev dev-watch dev-electron build typecheck test test-watch verify package-mac deploy clean
+.PHONY: help install dev dev-watch dev-electron build typecheck test test-watch verify verify-signing package-mac deploy clean
 
 help:
 	@printf "Available targets:\n"
@@ -17,6 +17,7 @@ help:
 	@printf "  make test           Run Vitest suites\n"
 	@printf "  make test-watch     Run Vitest in watch mode\n"
 	@printf "  make verify         Run build, typecheck, and tests\n"
+	@printf "  make verify-signing Run macOS signing and entitlement checks\n"
 	@printf "  make package-mac    Build and package the macOS app\n"
 	@printf "  make deploy         Verify and package the macOS app\n"
 	@printf "  make clean          Remove generated build artifacts\n"
@@ -46,6 +47,9 @@ test-watch:
 	$(PNPM) test:watch
 
 verify: build typecheck test
+
+verify-signing:
+	$(PNPM) verify:signing
 
 package-mac:
 	$(PNPM) package:mac

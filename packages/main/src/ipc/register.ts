@@ -1,11 +1,15 @@
 import { app, ipcMain } from "electron";
 import { ipcChannels } from "@kanban/shared";
 import type { KanbanRepository } from "../db/repositories/kanban-repository";
+import type { SettingsRepository } from "../db/repositories/settings-repository";
+import type { SyncService } from "../sync/sync-service";
 import { KanbanHandlers } from "./kanban";
 import { bindInvoke } from "./contract-binder";
 
 export interface IpcServiceContext {
   kanban: KanbanRepository;
+  settings: SettingsRepository;
+  sync: SyncService;
 }
 
 export function registerIpc(context: IpcServiceContext): void {
@@ -17,6 +21,11 @@ export function registerIpc(context: IpcServiceContext): void {
     version: app.getVersion(),
     userDataPath: app.getPath("userData")
   }));
+
+  bindInvoke(ipcMain, ipcChannels.settings.getSettings, () => context.settings.getSettings());
+  bindInvoke(ipcMain, ipcChannels.settings.updateSettings, (input) => context.settings.updateSettings(input));
+  bindInvoke(ipcMain, ipcChannels.sync.getStatus, () => context.sync.getStatus());
+  bindInvoke(ipcMain, ipcChannels.sync.syncNow, () => context.sync.syncNow());
 
   bindInvoke(ipcMain, ipcChannels.kanban.listBoards, () => kanban.listBoards());
   bindInvoke(ipcMain, ipcChannels.kanban.createBoard, (input) => kanban.createBoard(input));

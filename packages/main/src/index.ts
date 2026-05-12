@@ -1,8 +1,12 @@
 import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron";
+import { ipcChannels } from "@kanban/shared";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { openKanbanDatabase } from "./db/services";
 import { KanbanRepository } from "./db/repositories/kanban-repository";
+import { SettingsRepository } from "./db/repositories/settings-repository";
+import { CloudKitHelperClient, resolveCloudKitHelperPath } from "./sync/cloudkit-helper-client";
+import { SyncService } from "./sync/sync-service";
 import { resolveKanbanPaths } from "./storage/path-service";
 import { registerIpc } from "./ipc/register";
 
@@ -19,11 +23,17 @@ function configureApplicationMenu(): void {
     return;
   }
 
+  const openSettings = () => {
+    mainWindow?.webContents.send(ipcChannels.app.openSettings);
+  };
+
   const template = [
     {
       label: appName,
       submenu: [
         { role: "about", label: `About ${appName}` },
+        { type: "separator" },
+        { label: "Settings...", accelerator: "Command+,", click: openSettings },
         { type: "separator" },
         { role: "services" },
         { type: "separator" },
@@ -82,9 +92,16 @@ app.whenReady().then(async () => {
   const paths = resolveKanbanPaths();
   mkdirSync(paths.root, { recursive: true });
   const database = openKanbanDatabase(paths.databasePath);
-  registerIpc({
-    kanban: new KanbanRepository(database)
+  const settings = new SettingsRepository(database);
+  const cloudKitHelper = new CloudKitHelperClient({
+    helperPath: resolveCloudKitHelperPath(app.getAppPath(), process.resourcesPath, app.isPackaged)
   });
+  registerIpc({
+    kanban: new KanbanRepository(database),
+    settings,
+    sync: new SyncService(database, settings, cloudKitHelper)
+  });
+  app.once("before-quit", () => cloudKitHelper.dispose());
 
   await createWindow();
 });

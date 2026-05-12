@@ -11,6 +11,8 @@ import type {
   KanbanColumnPatch,
   KanbanLabel
 } from "./types/kanban";
+import type { AppSettings, UpdateAppSettingsInput } from "./types/settings";
+import type { SyncStatus } from "./types/sync";
 
 export interface SystemStatus {
   appName: "Kanban";
@@ -20,8 +22,19 @@ export interface SystemStatus {
 }
 
 export interface IpcContract {
+  app: {
+    onOpenSettings(callback: () => void): () => void;
+  };
   system: {
     getStatus(): Promise<SystemStatus>;
+  };
+  settings: {
+    getSettings(): Promise<AppSettings>;
+    updateSettings(input: UpdateAppSettingsInput): Promise<AppSettings>;
+  };
+  sync: {
+    getStatus(): Promise<SyncStatus>;
+    syncNow(): Promise<SyncStatus>;
   };
   kanban: {
     listBoards(): Promise<KanbanBoard[]>;
@@ -52,6 +65,10 @@ export interface IpcContract {
 
 export const ipcContractHandlers = [
   "system.getStatus",
+  "settings.getSettings",
+  "settings.updateSettings",
+  "sync.getStatus",
+  "sync.syncNow",
   "kanban.listBoards",
   "kanban.createBoard",
   "kanban.renameBoard",

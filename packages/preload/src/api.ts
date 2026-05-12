@@ -2,8 +2,23 @@ import { ipcRenderer } from "electron";
 import { ipcChannels, type IpcContract } from "@kanban/shared";
 
 export const api: IpcContract = {
+  app: {
+    onOpenSettings: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on(ipcChannels.app.openSettings, listener);
+      return () => ipcRenderer.removeListener(ipcChannels.app.openSettings, listener);
+    }
+  },
   system: {
     getStatus: () => ipcRenderer.invoke(ipcChannels.system.getStatus)
+  },
+  settings: {
+    getSettings: () => ipcRenderer.invoke(ipcChannels.settings.getSettings),
+    updateSettings: (input) => ipcRenderer.invoke(ipcChannels.settings.updateSettings, input)
+  },
+  sync: {
+    getStatus: () => ipcRenderer.invoke(ipcChannels.sync.getStatus),
+    syncNow: () => ipcRenderer.invoke(ipcChannels.sync.syncNow)
   },
   kanban: {
     listBoards: () => ipcRenderer.invoke(ipcChannels.kanban.listBoards),

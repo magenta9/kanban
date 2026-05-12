@@ -10,9 +10,14 @@ files:
   - packages/renderer/dist/**
   - packages/shared/dist/**
   - build/icon.png
+extraResources:
+  - from: native/cloudkit-helper/dist/KanbanCloudKitHelper
+    to: KanbanCloudKitHelper
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   target:
     - dmg
 asarUnpack:
