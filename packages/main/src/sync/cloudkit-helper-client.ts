@@ -16,6 +16,7 @@ interface HelperRequest {
     payload: {
         containerIdentifier: string;
         zoneName: string;
+        changes?: LocalSyncChange[];
     };
 }
 
@@ -38,6 +39,15 @@ interface EnsureZoneResult extends AccountStatusResult {
 interface SyncNowResult extends EnsureZoneResult {
     pushedChangeCount: number;
     pulledChangeCount: number;
+    acknowledgedOutboxIds: string[];
+}
+
+export interface LocalSyncChange {
+    outboxId: string;
+    entityType: string;
+    entityId: string;
+    operation: "save" | "delete";
+    fields?: Record<string, unknown>;
 }
 
 interface PendingRequest {
@@ -68,8 +78,8 @@ export class CloudKitHelperClient {
         return await this.send<EnsureZoneResult>("ensureZone");
     }
 
-    async syncNow(): Promise<SyncNowResult> {
-        return await this.send<SyncNowResult>("syncNow");
+    async syncNow(changes: LocalSyncChange[]): Promise<SyncNowResult> {
+        return await this.send<SyncNowResult>("syncNow", changes);
     }
 
     dispose(): void {
@@ -84,7 +94,7 @@ export class CloudKitHelperClient {
         }
     }
 
-    private async send<Result>(command: string): Promise<Result> {
+    private async send<Result>(command: string, changes?: LocalSyncChange[]): Promise<Result> {
         const child = this.ensureProcess();
         const id = randomUUID();
         const request: HelperRequest = {
@@ -92,7 +102,8 @@ export class CloudKitHelperClient {
             command,
             payload: {
                 containerIdentifier: defaultContainerIdentifier,
-                zoneName: defaultZoneName
+                zoneName: defaultZoneName,
+                changes
             }
         };
 

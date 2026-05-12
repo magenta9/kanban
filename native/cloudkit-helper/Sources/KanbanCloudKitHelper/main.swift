@@ -14,6 +14,59 @@ struct HelperRequest: Decodable {
 struct HelperPayload: Decodable {
     let containerIdentifier: String?
     let zoneName: String?
+    let changes: [SyncChange]?
+}
+
+struct SyncChange: Decodable {
+    let outboxId: String
+    let entityType: String
+    let entityId: String
+    let operation: String
+    let fields: [String: JSONValue]?
+}
+
+enum JSONValue: Codable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else {
+            self = .object(try container.decode([String: JSONValue].self))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value):
+            try container.encode(value)
+        case .number(let value):
+            try container.encode(value)
+        case .bool(let value):
+            try container.encode(value)
+        case .object(let value):
+            try container.encode(value)
+        case .array(let value):
+            try container.encode(value)
+        case .null:
+            try container.encodeNil()
+        }
+    }
 }
 
 struct HelperResponse<Result: Encodable>: Encodable {
@@ -39,6 +92,7 @@ struct SyncNowResult: Encodable {
     let zoneName: String
     let pushedChangeCount: Int
     let pulledChangeCount: Int
+    let acknowledgedOutboxIds: [String]
 }
 
 enum HelperError: Error {
@@ -84,6 +138,43 @@ func ensureZone(for container: CKContainer, zoneId: CKRecordZone.ID) async throw
     } catch let error as CKError where error.code == .zoneNotFound {
         _ = try await database.save(CKRecordZone(zoneID: zoneId))
     }
+}
+
+func apply(_ change: SyncChange, database: CKDatabase, zoneId: CKRecordZone.ID) async throws {
+    let recordId = CKRecord.ID(recordName: recordName(for: change), zoneID: zoneId)
+    switch change.operation {
+    case "save":
+        let record: CKRecord
+        do {
+            record = try await database.record(for: recordId)
+        } catch let error as CKError where error.code == .unknownItem {
+            record = CKRecord(recordType: "KanbanEntity", recordID: recordId)
+        }
+        record["entityType"] = change.entityType as CKRecordValue
+        record["entityId"] = change.entityId as CKRecordValue
+        record["payloadJson"] = try payloadJson(for: change.fields) as CKRecordValue
+        record["updatedAtMillis"] = NSNumber(value: Int64(Date().timeIntervalSince1970 * 1000))
+        _ = try await database.save(record)
+    case "delete":
+        do {
+            _ = try await database.deleteRecord(withID: recordId)
+        } catch let error as CKError where error.code == .unknownItem {
+            return
+        }
+    default:
+        throw HelperError.unknownCommand("sync operation \(change.operation)")
+    }
+}
+
+func payloadJson(for fields: [String: JSONValue]?) throws -> String {
+    let data = try JSONEncoder().encode(fields ?? [:])
+    return String(data: data, encoding: .utf8) ?? "{}"
+}
+
+func recordName(for change: SyncChange) -> String {
+    let raw = "\(change.entityType):\(change.entityId)"
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+    return raw.unicodeScalars.map { allowed.contains($0) ? String($0) : "_" }.joined()
 }
 
 func statusName(_ status: CKAccountStatus) -> String {
@@ -133,7 +224,21 @@ func handle(_ request: HelperRequest) async throws -> any Encodable {
         try requireSignedIn(status)
         let id = zoneId(for: request.payload)
         try await ensureZone(for: cloudContainer, zoneId: id)
-        return SyncNowResult(accountStatus: statusValue, zoneReady: true, zoneName: id.zoneName, pushedChangeCount: 0, pulledChangeCount: 0)
+        let changes = request.payload?.changes ?? []
+        let database = cloudContainer.privateCloudDatabase
+        var acknowledgedOutboxIds: [String] = []
+        for change in changes {
+            try await apply(change, database: database, zoneId: id)
+            acknowledgedOutboxIds.append(change.outboxId)
+        }
+        return SyncNowResult(
+            accountStatus: statusValue,
+            zoneReady: true,
+            zoneName: id.zoneName,
+            pushedChangeCount: acknowledgedOutboxIds.count,
+            pulledChangeCount: 0,
+            acknowledgedOutboxIds: acknowledgedOutboxIds
+        )
     default:
         throw HelperError.unknownCommand(request.command)
     }
