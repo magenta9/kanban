@@ -8,15 +8,11 @@ const documentWithText = {
 };
 
 describe("shouldSyncRichTextEditorContent", () => {
-    it("does not replace editor content while the user is focused in the editor", () => {
-        expect(shouldSyncRichTextEditorContent(true, emptyDocument, documentWithText)).toBe(false);
+    it("syncs when current and next values differ", () => {
+        expect(shouldSyncRichTextEditorContent(emptyDocument, documentWithText)).toBe(true);
     });
 
-    it("syncs external content changes when the editor is not focused", () => {
-        expect(shouldSyncRichTextEditorContent(false, emptyDocument, documentWithText)).toBe(true);
-    });
-
-    it("skips redundant external content syncs", () => {
-        expect(shouldSyncRichTextEditorContent(false, emptyDocument, emptyDocument)).toBe(false);
+    it("skips redundant syncs when values are identical", () => {
+        expect(shouldSyncRichTextEditorContent(emptyDocument, emptyDocument)).toBe(false);
     });
 });

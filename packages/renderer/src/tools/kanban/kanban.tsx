@@ -1186,17 +1186,33 @@ function CustomSelect({ label, value, options, icon, showLabel = true, onChange 
 }
 
 function RichTextEditor({ value, onChange }: { value?: KanbanRichTextDocument; onChange: (json: KanbanRichTextDocument, text: string) => void }): JSX.Element {
+    const pendingValueRef = useRef<JSONContent | null>(null);
+
     const editor = useEditor({
         extensions: [StarterKit],
         content: (value as JSONContent | undefined) ?? { type: "doc", content: [{ type: "paragraph" }] },
         editorProps: { attributes: { class: "kanban-editor-content" } },
-        onUpdate: ({ editor: current }) => onChange(current.getJSON() as KanbanRichTextDocument, current.getText())
+        onUpdate: ({ editor: current }) => onChange(current.getJSON() as KanbanRichTextDocument, current.getText()),
+        onBlur: ({ editor: current }) => {
+            const pending = pendingValueRef.current;
+            if (pending !== null) {
+                pendingValueRef.current = null;
+                if (shouldSyncRichTextEditorContent(current.getJSON(), pending)) {
+                    current.commands.setContent(pending, { emitUpdate: false });
+                }
+            }
+        }
     });
 
     useEffect(() => {
         if (!editor) return;
         const newValue = (value as JSONContent | undefined) ?? { type: "doc", content: [{ type: "paragraph" }] };
-        if (shouldSyncRichTextEditorContent(editor.isFocused, editor.getJSON(), newValue)) {
+        if (editor.isFocused) {
+            pendingValueRef.current = newValue;
+            return;
+        }
+        pendingValueRef.current = null;
+        if (shouldSyncRichTextEditorContent(editor.getJSON(), newValue)) {
             editor.commands.setContent(newValue, { emitUpdate: false });
         }
     }, [editor, value]);
@@ -1208,8 +1224,7 @@ function RichTextEditor({ value, onChange }: { value?: KanbanRichTextDocument; o
     );
 }
 
-export function shouldSyncRichTextEditorContent(isFocused: boolean, currentValue: JSONContent, nextValue: JSONContent): boolean {
-    if (isFocused) return false;
+export function shouldSyncRichTextEditorContent(currentValue: JSONContent, nextValue: JSONContent): boolean {
     return JSON.stringify(currentValue) !== JSON.stringify(nextValue);
 }
 
