@@ -40,6 +40,7 @@ interface SyncNowResult extends EnsureZoneResult {
     pushedChangeCount: number;
     pulledChangeCount: number;
     acknowledgedOutboxIds: string[];
+    records: RemoteSyncRecord[];
 }
 
 export interface LocalSyncChange {
@@ -48,6 +49,14 @@ export interface LocalSyncChange {
     entityId: string;
     operation: "save" | "delete";
     fields?: Record<string, unknown>;
+}
+
+export interface RemoteSyncRecord {
+    entityType: string;
+    entityId: string;
+    deleted: boolean;
+    payloadJson: string;
+    modifiedAtMillis: number;
 }
 
 interface PendingRequest {

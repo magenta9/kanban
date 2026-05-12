@@ -93,6 +93,15 @@ struct SyncNowResult: Encodable {
     let pushedChangeCount: Int
     let pulledChangeCount: Int
     let acknowledgedOutboxIds: [String]
+    let records: [RemoteRecord]
+}
+
+struct RemoteRecord: Encodable {
+    let entityType: String
+    let entityId: String
+    let deleted: Bool
+    let payloadJson: String
+    let modifiedAtMillis: Int64
 }
 
 enum HelperError: Error {
@@ -144,25 +153,57 @@ func apply(_ change: SyncChange, database: CKDatabase, zoneId: CKRecordZone.ID) 
     let recordId = CKRecord.ID(recordName: recordName(for: change), zoneID: zoneId)
     switch change.operation {
     case "save":
-        let record: CKRecord
-        do {
-            record = try await database.record(for: recordId)
-        } catch let error as CKError where error.code == .unknownItem {
-            record = CKRecord(recordType: "KanbanEntity", recordID: recordId)
-        }
+        let record = try await editableRecord(database: database, recordId: recordId)
         record["entityType"] = change.entityType as CKRecordValue
         record["entityId"] = change.entityId as CKRecordValue
+        record["deleted"] = false as CKRecordValue
         record["payloadJson"] = try payloadJson(for: change.fields) as CKRecordValue
         record["updatedAtMillis"] = NSNumber(value: Int64(Date().timeIntervalSince1970 * 1000))
         _ = try await database.save(record)
     case "delete":
-        do {
-            _ = try await database.deleteRecord(withID: recordId)
-        } catch let error as CKError where error.code == .unknownItem {
-            return
-        }
+        let record = try await editableRecord(database: database, recordId: recordId)
+        record["entityType"] = change.entityType as CKRecordValue
+        record["entityId"] = change.entityId as CKRecordValue
+        record["deleted"] = true as CKRecordValue
+        record["payloadJson"] = "{}" as CKRecordValue
+        record["updatedAtMillis"] = NSNumber(value: Int64(Date().timeIntervalSince1970 * 1000))
+        _ = try await database.save(record)
     default:
         throw HelperError.unknownCommand("sync operation \(change.operation)")
+    }
+}
+
+func editableRecord(database: CKDatabase, recordId: CKRecord.ID) async throws -> CKRecord {
+    do {
+        return try await database.record(for: recordId)
+    } catch let error as CKError where error.code == .unknownItem {
+        return CKRecord(recordType: "KanbanEntity", recordID: recordId)
+    }
+}
+
+func fetchRecords(database: CKDatabase, zoneId: CKRecordZone.ID) async throws -> [RemoteRecord] {
+    let query = CKQuery(recordType: "KanbanEntity", predicate: NSPredicate(value: true))
+    let response = try await database.records(
+        matching: query,
+        inZoneWith: zoneId,
+        desiredKeys: ["entityType", "entityId", "deleted", "payloadJson", "updatedAtMillis"],
+        resultsLimit: CKQueryOperation.maximumResults
+    )
+
+    return response.matchResults.compactMap { _, result in
+        guard case .success(let record) = result,
+              let entityType = record["entityType"] as? String,
+              let entityId = record["entityId"] as? String else {
+            return nil
+        }
+        let modifiedAtMillis = (record["updatedAtMillis"] as? NSNumber)?.int64Value ?? Int64((record.modificationDate ?? Date()).timeIntervalSince1970 * 1000)
+        return RemoteRecord(
+            entityType: entityType,
+            entityId: entityId,
+            deleted: (record["deleted"] as? NSNumber)?.boolValue ?? false,
+            payloadJson: record["payloadJson"] as? String ?? "{}",
+            modifiedAtMillis: modifiedAtMillis
+        )
     }
 }
 
@@ -231,13 +272,15 @@ func handle(_ request: HelperRequest) async throws -> any Encodable {
             try await apply(change, database: database, zoneId: id)
             acknowledgedOutboxIds.append(change.outboxId)
         }
+        let records = try await fetchRecords(database: database, zoneId: id)
         return SyncNowResult(
             accountStatus: statusValue,
             zoneReady: true,
             zoneName: id.zoneName,
             pushedChangeCount: acknowledgedOutboxIds.count,
-            pulledChangeCount: 0,
-            acknowledgedOutboxIds: acknowledgedOutboxIds
+            pulledChangeCount: records.count,
+            acknowledgedOutboxIds: acknowledgedOutboxIds,
+            records: records
         )
     default:
         throw HelperError.unknownCommand(request.command)
