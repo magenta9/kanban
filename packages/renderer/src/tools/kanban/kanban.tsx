@@ -8,6 +8,7 @@ import {
     useSensor,
     useSensors,
     type DragEndEvent,
+    type DragOverEvent,
     type DragStartEvent
 } from "@dnd-kit/core";
 import { arrayMove, horizontalListSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -72,6 +73,13 @@ interface ConfirmDialogState {
     onConfirm: () => Promise<void>;
 }
 
+interface CardDropTarget {
+    columnId: string;
+    index: number;
+    beforeId?: string;
+    afterId?: string;
+}
+
 const priorities: KanbanPriority[] = ["none", "low", "medium", "high", "urgent"];
 const weekdaysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const emptyRichTextDocument = { type: "doc", content: [{ type: "paragraph" }] } as KanbanRichTextDocument;
@@ -129,6 +137,7 @@ export function KanbanPage(): JSX.Element {
     const [textDialog, setTextDialog] = useState<TextDialogState | null>(null);
     const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
     const [activeDragId, setActiveDragId] = useState<string | null>(null);
+    const [cardDropTarget, setCardDropTarget] = useState<CardDropTarget | null>(null);
     const [boardListCollapsed, setBoardListCollapsed] = useState(false);
     const [helpOpen, setHelpOpen] = useState(false);
     const composerInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -360,6 +369,11 @@ export function KanbanPage(): JSX.Element {
 
     function handleDragStart(event: DragStartEvent): void {
         setActiveDragId(String(event.active.id));
+        setCardDropTarget(null);
+    }
+
+    function handleDragOver(event: DragOverEvent): void {
+        setCardDropTarget(cardDropTargetFromEvent(event));
     }
 
     useEffect(() => {
@@ -457,28 +471,57 @@ export function KanbanPage(): JSX.Element {
 
             if (!activeId.startsWith("card:")) return;
             const cardId = activeId.slice(5);
-            const activeCard = activeCards.find((card) => card.id === cardId);
-            const overCard = overId.startsWith("card:") ? activeCards.find((card) => card.id === overId.slice(5)) : undefined;
-            const toColumnId = overId.startsWith("column:") ? overId.slice(7) : overCard?.columnId;
-            if (!toColumnId) return;
-            const targetCards = activeCards.filter((card) => card.columnId === toColumnId).sort((left, right) => left.sortOrder - right.sortOrder);
-            const lastTargetCard = targetCards.filter((card) => card.id !== cardId).at(-1);
-            const position = overCard
-                ? activeCard?.columnId === overCard.columnId
-                    ? targetCards.findIndex((card) => card.id === cardId) < targetCards.findIndex((card) => card.id === overCard.id)
-                        ? { beforeId: overCard.id }
-                        : { afterId: overCard.id }
-                    : event.delta.y >= 0
-                        ? { beforeId: overCard.id }
-                        : { afterId: overCard.id }
-                : lastTargetCard
-                    ? { beforeId: lastTargetCard.id }
-                    : {};
-            await getApi().kanban.reorderCard({ id: cardId, toColumnId, ...position });
+            const target = cardDropTargetFromEvent(event);
+            if (!target) return;
+            const position = target.beforeId ? { beforeId: target.beforeId } : target.afterId ? { afterId: target.afterId } : {};
+            await getApi().kanban.reorderCard({ id: cardId, toColumnId: target.columnId, ...position });
             await loadBoardData(selectedBoardId);
         } finally {
             setActiveDragId(null);
+            setCardDropTarget(null);
         }
+    }
+
+    function cardDropTargetFromEvent(event: DragOverEvent | DragEndEvent): CardDropTarget | null {
+        const activeId = String(event.active.id);
+        const overId = event.over ? String(event.over.id) : "";
+        if (!activeId.startsWith("card:") || !overId || activeId === overId) return null;
+
+        const cardId = activeId.slice(5);
+        const activeCard = activeCards.find((card) => card.id === cardId);
+        if (!activeCard) return null;
+
+        if (overId.startsWith("column:")) {
+            const columnId = overId.slice(7);
+            const targetCards = sortedCardsInColumn(activeCards, columnId).filter((card) => card.id !== cardId);
+            const lastCard = targetCards.at(-1);
+            return {
+                columnId,
+                index: targetCards.length,
+                ...(lastCard ? { beforeId: lastCard.id } : {})
+            };
+        }
+
+        if (!overId.startsWith("card:")) return null;
+        const overCard = activeCards.find((card) => card.id === overId.slice(5));
+        if (!overCard) return null;
+
+        const targetCards = sortedCardsInColumn(activeCards, overCard.columnId).filter((card) => card.id !== cardId);
+        const overIndex = targetCards.findIndex((card) => card.id === overCard.id);
+        if (overIndex < 0) return null;
+
+        const activeRect = event.active.rect.current.translated ?? event.active.rect.current.initial;
+        const overRect = event.over?.rect;
+        const activeCenterY = activeRect ? activeRect.top + activeRect.height / 2 : 0;
+        const overCenterY = overRect ? overRect.top + overRect.height / 2 : activeCenterY;
+        const placeBefore = activeCenterY <= overCenterY;
+        const targetIndex = placeBefore ? overIndex : overIndex + 1;
+
+        return {
+            columnId: overCard.columnId,
+            index: targetIndex,
+            ...(placeBefore ? { afterId: overCard.id } : { beforeId: overCard.id })
+        };
     }
 
     return (
@@ -535,7 +578,7 @@ export function KanbanPage(): JSX.Element {
                     {!loading && boards.length === 0 ? <EmptyBoard onCreate={createBoard} /> : null}
 
                     {selectedBoard ? (
-                        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragCancel={() => setActiveDragId(null)} onDragEnd={(event) => void handleDragEnd(event)}>
+                        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragCancel={() => { setActiveDragId(null); setCardDropTarget(null); }} onDragEnd={(event) => void handleDragEnd(event)}>
                             {view === "kanban" ? (
                                 <SortableContext items={visibleColumns.map((column) => `column:${column.id}`)} strategy={horizontalListSortingStrategy}>
                                     <div key="kanban" className="kanban-board-canvas kanban-view-panel">
@@ -557,6 +600,7 @@ export function KanbanPage(): JSX.Element {
                                                 onDeleteCard={(cardId) => void deleteCard(cardId)}
                                                 onRename={() => void renameColumn(column)}
                                                 onArchive={() => void archiveColumn(column)}
+                                                dropTarget={activeDraggingCard && cardDropTarget?.columnId === column.id ? cardDropTarget : null}
                                             />
                                         ))}
                                         <button type="button" className="kanban-add-column" onClick={createColumn}>
@@ -806,6 +850,10 @@ function EmptyBoard({ onCreate }: { onCreate: () => void }): JSX.Element {
     );
 }
 
+function sortedCardsInColumn(cards: KanbanCard[], columnId: string): KanbanCard[] {
+    return cards.filter((card) => card.columnId === columnId).sort((left, right) => left.sortOrder - right.sortOrder);
+}
+
 function SortableColumn({
     column,
     cards,
@@ -821,7 +869,8 @@ function SortableColumn({
     onArchiveCard,
     onDeleteCard,
     onRename,
-    onArchive
+    onArchive,
+    dropTarget
 }: {
     column: KanbanColumn;
     cards: KanbanCard[];
@@ -838,33 +887,38 @@ function SortableColumn({
     onDeleteCard: (id: string) => void;
     onRename: () => void;
     onArchive: () => void;
+    dropTarget: CardDropTarget | null;
 }): JSX.Element {
     const { attributes, isDragging, isOver, listeners, setNodeRef, transform, transition } = useSortable({ id: `column:${column.id}` });
+    const dropIndex = dropTarget?.index ?? -1;
+
     return (
-        <section ref={setNodeRef} className={`kanban-column ${isOver ? "over" : ""} ${isDragging ? "dragging" : ""}`} style={{ transform: CSS.Transform.toString(transform), transition }}>
+        <section ref={setNodeRef} className={`kanban-column ${isOver || dropTarget ? "over" : ""} ${dropTarget ? "drop-target" : ""} ${isDragging ? "dragging" : ""}`} style={{ transform: CSS.Transform.toString(transform), transition }}>
             <header>
                 <span className="kanban-column-dot" style={{ background: column.color ?? "#9ca3af" }} />
                 <div className="kanban-column-title" {...attributes} {...listeners} aria-label={`Drag ${column.name}`}>
                     <strong>{column.name}</strong>
-                    <small>{cards.length} cards</small>
                 </div>
+                <button type="button" className="kanban-column-rename" onClick={onRename} aria-label={`Rename ${column.name}`}><Pencil size={13} /></button>
+                <button type="button" className="kanban-column-archive" onClick={onArchive} aria-label={`Archive ${column.name}`}><Archive size={13} /></button>
                 <span className="kanban-column-count">{cards.length}</span>
-                <button type="button" onClick={onRename} aria-label={`Rename ${column.name}`}><Pencil size={13} /></button>
-                <button type="button" onClick={onArchive} aria-label={`Archive ${column.name}`}><Archive size={13} /></button>
             </header>
             <SortableContext items={cards.map((card) => `card:${card.id}`)} strategy={verticalListSortingStrategy}>
                 <div className="kanban-card-stack">
-                    {cards.map((card) => (
-                        <SortableCard
-                            key={card.id}
-                            card={card}
-                            labels={labels}
-                            onOpen={() => onOpenCard(card.id)}
-                            onArchive={() => onArchiveCard(card.id)}
-                            onDelete={() => onDeleteCard(card.id)}
-                        />
+                    {dropIndex === 0 ? <div className="kanban-card-drop-indicator" aria-hidden="true" /> : null}
+                    {cards.map((card, index) => (
+                        <div className="kanban-card-stack-item" key={card.id}>
+                            <SortableCard
+                                card={card}
+                                labels={labels}
+                                onOpen={() => onOpenCard(card.id)}
+                                onArchive={() => onArchiveCard(card.id)}
+                                onDelete={() => onDeleteCard(card.id)}
+                            />
+                            {dropIndex === index + 1 ? <div className="kanban-card-drop-indicator" aria-hidden="true" /> : null}
+                        </div>
                     ))}
-                    {cards.length === 0 ? <div className="kanban-column-empty">Drop cards here</div> : null}
+                    {cards.length === 0 && !dropTarget ? <div className="kanban-column-empty">Drop cards here</div> : null}
                 </div>
             </SortableContext>
             {composerOpen ? (
