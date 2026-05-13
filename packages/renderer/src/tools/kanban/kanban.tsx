@@ -1587,7 +1587,7 @@ function RichTextEditor({ value, onChange, onSubmit }: {
                 }
                 if (!onSubmitRef.current || !isRichTextSubmitShortcut(event)) return false;
                 event.preventDefault();
-                onSubmitRef.current(view.state.doc.toJSON() as KanbanRichTextDocument, view.state.doc.textBetween(0, view.state.doc.content.size, "\n"));
+                onSubmitRef.current(view.state.doc.toJSON() as KanbanRichTextDocument, currentEditor?.getText() ?? "");
                 view.dom.blur();
                 return true;
             }
