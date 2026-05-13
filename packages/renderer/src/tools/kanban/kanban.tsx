@@ -15,7 +15,7 @@ import { arrayMove, horizontalListSortingStrategy, SortableContext, sortableKeyb
 import { CSS } from "@dnd-kit/utilities";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import type { JSONContent } from "@tiptap/react";
+import type { Editor, JSONContent } from "@tiptap/react";
 import type { KanbanBoard, KanbanCard, KanbanCardPatch, KanbanColumn, KanbanComment, KanbanLabel, KanbanPriority, KanbanRichTextDocument, KanbanSubtask } from "@kanban/shared";
 import {
     Archive,
@@ -52,6 +52,12 @@ type KeyboardShortcutAction =
     | { type: "selectBoardByIndex"; index: number };
 
 type ShortcutEvent = Pick<KeyboardEvent, "key" | "metaKey" | "shiftKey" | "altKey">;
+type RichTextSubmitShortcutEvent = Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing">;
+type RichTextListContinuationShortcutEvent = Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing">;
+type RichTextSubmitHandler = (json: KanbanRichTextDocument, text: string) => void;
+type RichTextListCommandEditor = Pick<Editor, "isActive"> & {
+    commands: Pick<Editor["commands"], "splitListItem" | "liftListItem">;
+};
 
 interface SelectOption {
     value: string;
@@ -1272,6 +1278,36 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
         return () => window.clearTimeout(timeout);
     }, [card.id, title, columnId, priority, startDate, endDate, descriptionJson, descriptionText, subtasks, comments, onSave]);
 
+    function saveDetailsNow(patch: Partial<{
+        title: string;
+        columnId: string;
+        priority: KanbanPriority;
+        startDate: number | null;
+        endDate: number | null;
+        descriptionJson?: KanbanRichTextDocument;
+        descriptionText: string;
+        subtasks: KanbanSubtask[];
+        comments: KanbanComment[];
+    }>): void {
+        const nextDetails = {
+            title,
+            columnId,
+            priority,
+            startDate,
+            endDate,
+            descriptionJson,
+            descriptionText,
+            subtasks,
+            comments,
+            ...patch
+        };
+        const snapshot = cardDetailsSnapshot(nextDetails);
+        lastSavedSnapshot.current = snapshot;
+        void onSave(card.id, nextDetails).catch(() => {
+            lastSavedSnapshot.current = "";
+        });
+    }
+
     function addSubtask(): void {
         const nextTitle = subtaskDraft.trim();
         if (!nextTitle) return;
@@ -1302,8 +1338,8 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
         });
     }
 
-    function addComment(): void {
-        const body = commentDraft.trim();
+    function addComment(draft = commentDraft): void {
+        const body = draft.trim();
         if (!body) return;
         const now = Date.now();
         setComments((current) => [...current, { id: crypto.randomUUID(), body, createdAt: now, updatedAt: now }]);
@@ -1355,7 +1391,15 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
                 </section>
                 <section className="kanban-detail-section kanban-detail-description">
                     <h4>Description</h4>
-                    <RichTextEditor value={descriptionJson} onChange={(json, text) => { setDescriptionJson(json); setDescriptionText(text); }} />
+                    <RichTextEditor
+                        value={descriptionJson}
+                        onChange={(json, text) => { setDescriptionJson(json); setDescriptionText(text); }}
+                        onSubmit={(json, text) => {
+                            setDescriptionJson(json);
+                            setDescriptionText(text);
+                            saveDetailsNow({ descriptionJson: json, descriptionText: text });
+                        }}
+                    />
                 </section>
                 <section className="kanban-detail-section">
                     <h4>Subtasks</h4>
@@ -1407,7 +1451,11 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
                             </article>
                         ))}
                         <form className="kanban-comment-form" onSubmit={(event) => { event.preventDefault(); addComment(); }}>
-                            <RichTextEditor value={commentDraftJson} onChange={(json, text) => { setCommentDraftJson(json); setCommentDraft(text); }} />
+                            <RichTextEditor
+                                value={commentDraftJson}
+                                onChange={(json, text) => { setCommentDraftJson(json); setCommentDraft(text); }}
+                                onSubmit={(_, text) => addComment(text)}
+                            />
                             <button type="submit" disabled={!commentDraft.trim()}><Plus size={13} /> Add comment</button>
                         </form>
                     </div>
@@ -1507,14 +1555,44 @@ function CustomSelect({ label, value, options, icon, showLabel = true, onChange 
     );
 }
 
-function RichTextEditor({ value, onChange }: { value?: KanbanRichTextDocument; onChange: (json: KanbanRichTextDocument, text: string) => void }): JSX.Element {
+function RichTextEditor({ value, onChange, onSubmit }: {
+    value?: KanbanRichTextDocument;
+    onChange: (json: KanbanRichTextDocument, text: string) => void;
+    onSubmit?: RichTextSubmitHandler;
+}): JSX.Element {
     const pendingValueRef = useRef<JSONContent | null>(null);
+    const onChangeRef = useRef(onChange);
+    const onSubmitRef = useRef<RichTextSubmitHandler | undefined>(onSubmit);
+    const editorRef = useRef<Editor | null>(null);
+
+    useEffect(() => {
+        onChangeRef.current = onChange;
+        onSubmitRef.current = onSubmit;
+    }, [onChange, onSubmit]);
 
     const editor = useEditor({
         extensions: [StarterKit],
         content: (value as JSONContent | undefined) ?? { type: "doc", content: [{ type: "paragraph" }] },
-        editorProps: { attributes: { class: "kanban-editor-content" } },
-        onUpdate: ({ editor: current }) => onChange(current.getJSON() as KanbanRichTextDocument, current.getText()),
+        editorProps: {
+            attributes: { class: "kanban-editor-content" },
+            handleKeyDown: (view, event) => {
+                const currentEditor = editorRef.current;
+                if (currentEditor && isRichTextListContinuationShortcut(event) && isRichTextListActive(currentEditor)) {
+                    const handled = applyRichTextListContinuation(currentEditor);
+                    if (handled) {
+                        event.preventDefault();
+                        return true;
+                    }
+                    return false;
+                }
+                if (!onSubmitRef.current || !isRichTextSubmitShortcut(event)) return false;
+                event.preventDefault();
+                onSubmitRef.current(view.state.doc.toJSON() as KanbanRichTextDocument, currentEditor?.getText() ?? "");
+                view.dom.blur();
+                return true;
+            }
+        },
+        onUpdate: ({ editor: current }) => onChangeRef.current(current.getJSON() as KanbanRichTextDocument, current.getText()),
         onBlur: ({ editor: current }) => {
             const pending = pendingValueRef.current;
             if (pending !== null) {
@@ -1525,6 +1603,7 @@ function RichTextEditor({ value, onChange }: { value?: KanbanRichTextDocument; o
             }
         }
     });
+    editorRef.current = editor;
 
     useEffect(() => {
         if (!editor) return;
@@ -1548,6 +1627,22 @@ function RichTextEditor({ value, onChange }: { value?: KanbanRichTextDocument; o
 
 export function shouldSyncRichTextEditorContent(currentValue: JSONContent, nextValue: JSONContent): boolean {
     return JSON.stringify(currentValue) !== JSON.stringify(nextValue);
+}
+
+export function isRichTextSubmitShortcut(event: RichTextSubmitShortcutEvent): boolean {
+    return event.key === "Enter" && !event.shiftKey && !event.isComposing;
+}
+
+export function isRichTextListContinuationShortcut(event: RichTextListContinuationShortcutEvent): boolean {
+    return event.key === "Enter" && event.shiftKey && !event.isComposing;
+}
+
+export function isRichTextListActive(editor: Pick<Editor, "isActive">): boolean {
+    return editor.isActive("orderedList") || editor.isActive("bulletList");
+}
+
+export function applyRichTextListContinuation(editor: RichTextListCommandEditor): boolean {
+    return editor.commands.splitListItem("listItem") || editor.commands.liftListItem("listItem");
 }
 
 export function isEditableShortcutTarget(target: EventTarget | null): boolean {
