@@ -4,21 +4,44 @@ import {
     applyRichTextListContinuation,
     findRichTextMarkdownLinkSuffix,
     formatDateRange,
+    draftCardsForAiContext,
+    isMarkdownSubmitShortcut,
     isRichTextListActive,
     isRichTextListIndentShortcut,
     isRichTextListContinuationShortcut,
     isRichTextSubmitShortcut,
     normalizeDateRange,
     parseRichTextMarkdownLink,
+    relatedCardsForAiContext,
+    recurrenceSummary,
     resolveRichTextLinkPaste,
+    stableLabelColor,
     shouldSyncRichTextEditorContent
 } from "./kanban";
+import type { KanbanCard } from "@kanban/shared";
 
 const emptyDocument = { type: "doc", content: [{ type: "paragraph" }] };
 const documentWithText = {
     type: "doc",
     content: [{ type: "paragraph", content: [{ type: "text", text: "hello" }] }]
 };
+
+function testCard(patch: Partial<KanbanCard>): KanbanCard {
+    return {
+        id: "card",
+        boardId: "board",
+        columnId: "todo",
+        title: "Card",
+        priority: "none",
+        sortOrder: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        labelIds: [],
+        subtasks: [],
+        comments: [],
+        ...patch
+    };
+}
 
 describe("shouldSyncRichTextEditorContent", () => {
     it("syncs when current and next values differ", () => {
@@ -91,6 +114,47 @@ describe("isRichTextSubmitShortcut", () => {
 
     it("does not submit while composing text", () => {
         expect(isRichTextSubmitShortcut({ key: "Enter", shiftKey: false, isComposing: true })).toBe(false);
+    });
+});
+
+describe("isMarkdownSubmitShortcut", () => {
+    it("submits on Enter without Shift", () => {
+        expect(isMarkdownSubmitShortcut({ key: "Enter", shiftKey: false, isComposing: false })).toBe(true);
+    });
+
+    it("keeps Shift+Enter available for Markdown newlines", () => {
+        expect(isMarkdownSubmitShortcut({ key: "Enter", shiftKey: true, isComposing: false })).toBe(false);
+    });
+
+    it("does not submit while composing text", () => {
+        expect(isMarkdownSubmitShortcut({ key: "Enter", shiftKey: false, isComposing: true })).toBe(false);
+    });
+});
+
+describe("AI context helpers", () => {
+    it("uses shared-label recent active cards for existing card context", () => {
+        const current = testCard({ id: "current", labelIds: ["bug"] });
+        const matchingNewer = testCard({ id: "matching-newer", labelIds: ["bug"], updatedAt: 4 });
+        const matchingOlder = testCard({ id: "matching-older", labelIds: ["bug"], updatedAt: 2 });
+        const unrelated = testCard({ id: "unrelated", labelIds: ["feature"], updatedAt: 5 });
+        const archived = testCard({ id: "archived", labelIds: ["bug"], updatedAt: 6, archivedAt: 7 });
+
+        expect(relatedCardsForAiContext(current, [current, matchingOlder, unrelated, matchingNewer, archived]).map((card) => card.id)).toEqual([
+            "matching-newer",
+            "matching-older"
+        ]);
+    });
+
+    it("uses current-column recent active cards for draft context", () => {
+        const newest = testCard({ id: "newest", columnId: "todo", updatedAt: 4 });
+        const older = testCard({ id: "older", columnId: "todo", updatedAt: 2 });
+        const otherColumn = testCard({ id: "other", columnId: "doing", updatedAt: 5 });
+
+        expect(draftCardsForAiContext("todo", [older, otherColumn, newest]).map((card) => card.id)).toEqual(["newest", "older"]);
+    });
+
+    it("returns stable label colors for same board and normalized name", () => {
+        expect(stableLabelColor("board", " Product  Ops ")).toBe(stableLabelColor("board", "product ops"));
     });
 });
 
@@ -237,6 +301,42 @@ describe("applyRichTextListIndentation", () => {
                 liftListItem: () => false
             }
         }, false)).toBe(false);
+    });
+});
+
+describe("recurrenceSummary", () => {
+    it("formats active fixed recurrence", () => {
+        expect(recurrenceSummary({
+            id: "card-1",
+            boardId: "board-1",
+            columnId: "column-1",
+            title: "Review",
+            priority: "none",
+            sortOrder: 1000,
+            createdAt: 1,
+            updatedAt: 1,
+            labelIds: [],
+            subtasks: [],
+            comments: [],
+            recurrence: { seriesId: "series-1", trigger: "fixed", cycle: "weekly", status: "active" }
+        })).toBe("每周 · 固定时间");
+    });
+
+    it("formats blocked recurrence with its reason", () => {
+        expect(recurrenceSummary({
+            id: "card-1",
+            boardId: "board-1",
+            columnId: "column-1",
+            title: "Review",
+            priority: "none",
+            sortOrder: 1000,
+            createdAt: 1,
+            updatedAt: 1,
+            labelIds: [],
+            subtasks: [],
+            comments: [],
+            recurrence: { seriesId: "series-1", trigger: "completion", cycle: "daily", status: "blocked", blockedReason: "请选择一个可用的完成列。" }
+        })).toBe("已阻塞：请选择一个可用的完成列。");
     });
 });
 

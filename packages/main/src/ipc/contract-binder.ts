@@ -14,6 +14,7 @@ export function bindInvoke<TResult>(
 export function allDeclaredInvokeChannels(): string[] {
   return [
     ipcChannels.system.getStatus,
+    ...Object.values(ipcChannels.ai),
     ...Object.values(ipcChannels.kanban)
   ];
 }

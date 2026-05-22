@@ -3,13 +3,22 @@ import type {
   CreateKanbanCardInput,
   CreateKanbanColumnInput,
   CreateKanbanLabelInput,
+  AiSettingsState,
+  AiLabelSuggestionInput,
+  AiLabelSuggestionResult,
+  AiTestConnectionResult,
+  AiTextSuggestionInput,
+  AiTextSuggestionResult,
+  EnableKanbanRecurrenceInput,
   KanbanBoard,
   KanbanBoardExport,
   KanbanCard,
   KanbanCardPatch,
   KanbanColumn,
   KanbanColumnPatch,
-  KanbanLabel
+  KanbanLabel,
+  SaveAiSettingsInput,
+  UpdateKanbanRecurrenceInput
 } from "./types/kanban";
 
 export interface SystemStatus {
@@ -25,6 +34,14 @@ export interface IpcContract {
   system: {
     getStatus(): Promise<SystemStatus>;
   };
+  ai: {
+    getSettings(): Promise<AiSettingsState>;
+    saveSettings(input: SaveAiSettingsInput): Promise<AiSettingsState>;
+    testConnection(): Promise<AiTestConnectionResult>;
+    openLogFile(): Promise<void>;
+    suggestText(input: AiTextSuggestionInput): Promise<AiTextSuggestionResult>;
+    suggestLabels(input: AiLabelSuggestionInput): Promise<AiLabelSuggestionResult>;
+  };
   kanban: {
     listBoards(): Promise<KanbanBoard[]>;
     createBoard(input: CreateKanbanBoardInput): Promise<KanbanBoard>;
@@ -33,6 +50,7 @@ export interface IpcContract {
     listColumns(input: { boardId: string; includeArchived?: boolean }): Promise<KanbanColumn[]>;
     createColumn(input: CreateKanbanColumnInput): Promise<KanbanColumn>;
     updateColumn(input: { id: string; patch: Partial<KanbanColumnPatch> }): Promise<KanbanColumn>;
+    setCompletionColumn(input: { boardId: string; columnId: string }): Promise<KanbanBoard>;
     reorderColumn(input: { id: string; beforeId?: string; afterId?: string }): Promise<KanbanColumn>;
     archiveColumn(input: { id: string }): Promise<KanbanColumn>;
     restoreColumn(input: { id: string }): Promise<KanbanColumn>;
@@ -47,6 +65,10 @@ export interface IpcContract {
     createLabel(input: CreateKanbanLabelInput): Promise<KanbanLabel>;
     deleteLabel(input: { id: string }): Promise<void>;
     setCardLabels(input: { cardId: string; labelIds: string[] }): Promise<void>;
+    enableCardRecurrence(input: EnableKanbanRecurrenceInput): Promise<KanbanCard>;
+    updateCardRecurrence(input: UpdateKanbanRecurrenceInput): Promise<KanbanCard>;
+    disableCardRecurrence(input: { cardId: string }): Promise<KanbanCard>;
+    generateDueRecurrences(input?: { now?: number }): Promise<void>;
     exportBoard(input: { boardId: string }): Promise<KanbanBoardExport>;
     importBoard(input: { payload: KanbanBoardExport }): Promise<KanbanBoard>;
   };
@@ -55,6 +77,7 @@ export interface IpcContract {
 export interface IpcEvents {
   system: {
     onShowKeyboardShortcuts(callback: () => void): Unsubscribe;
+    onShowAiSettings(callback: () => void): Unsubscribe;
   };
 }
 
@@ -62,6 +85,12 @@ export type PreloadApi = IpcContract & IpcEvents;
 
 export const ipcContractHandlers = [
   "system.getStatus",
+  "ai.getSettings",
+  "ai.saveSettings",
+  "ai.testConnection",
+  "ai.openLogFile",
+  "ai.suggestText",
+  "ai.suggestLabels",
   "kanban.listBoards",
   "kanban.createBoard",
   "kanban.renameBoard",
@@ -69,6 +98,7 @@ export const ipcContractHandlers = [
   "kanban.listColumns",
   "kanban.createColumn",
   "kanban.updateColumn",
+  "kanban.setCompletionColumn",
   "kanban.reorderColumn",
   "kanban.archiveColumn",
   "kanban.restoreColumn",
@@ -83,6 +113,10 @@ export const ipcContractHandlers = [
   "kanban.createLabel",
   "kanban.deleteLabel",
   "kanban.setCardLabels",
+  "kanban.enableCardRecurrence",
+  "kanban.updateCardRecurrence",
+  "kanban.disableCardRecurrence",
+  "kanban.generateDueRecurrences",
   "kanban.exportBoard",
   "kanban.importBoard"
 ] as const;
