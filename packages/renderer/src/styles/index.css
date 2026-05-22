@@ -2363,6 +2363,7 @@ textarea {
   overflow: hidden;
   border: 1px solid var(--kanban-border);
   border-radius: 8px;
+  background: color-mix(in srgb, var(--kanban-surface) 84%, var(--kanban-surface-soft));
 }
 
 .kanban-editor-toolbar {
@@ -2379,58 +2380,102 @@ textarea {
 
 .kanban-editor-content {
   min-height: 230px;
-  padding: 14px;
+  padding: 18px 18px 20px;
   outline: none;
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.72;
+  color: var(--kanban-text);
+  text-rendering: optimizeLegibility;
 }
 
 .kanban-editor-content p,
 .kanban-editor-content h1,
 .kanban-editor-content h2,
 .kanban-editor-content h3 {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
+}
+
+.kanban-editor-content>*:last-child {
+  margin-bottom: 0;
 }
 
 .kanban-editor-content h1,
 .kanban-editor-content h2,
 .kanban-editor-content h3 {
-  font-weight: 760;
-  line-height: 1.25;
+  color: var(--kanban-text);
+  font-weight: 780;
+  line-height: 1.18;
+  letter-spacing: -0.02em;
+}
+
+.kanban-editor-content h1:not(:first-child),
+.kanban-editor-content h2:not(:first-child),
+.kanban-editor-content h3:not(:first-child) {
+  margin-top: 24px;
 }
 
 .kanban-editor-content h1 {
-  font-size: 20px;
+  font-size: 24px;
 }
 
 .kanban-editor-content h2 {
-  font-size: 17px;
+  font-size: 19px;
 }
 
 .kanban-editor-content h3 {
-  font-size: 15px;
+  font-size: 16px;
+}
+
+.kanban-editor-content strong {
+  color: var(--kanban-text);
+  font-weight: 760;
+}
+
+.kanban-editor-content em {
+  color: color-mix(in srgb, var(--kanban-text) 88%, var(--kanban-primary-soft-strong));
+}
+
+.kanban-editor-content a {
+  color: var(--kanban-primary);
+  font-weight: 640;
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in srgb, var(--kanban-primary) 42%, transparent);
+  text-decoration-thickness: 1.6px;
+  text-underline-offset: 0.18em;
+}
+
+.kanban-editor-content a:hover {
+  text-decoration-color: var(--kanban-primary);
+  background: color-mix(in srgb, var(--kanban-primary-soft) 72%, transparent);
 }
 
 .kanban-editor-content code {
-  border: 1px solid var(--kanban-border);
+  border: 1px solid color-mix(in srgb, var(--kanban-border) 84%, var(--kanban-primary-soft));
   border-radius: 6px;
-  background: var(--kanban-surface-soft);
-  padding: 1px 5px;
+  background: color-mix(in srgb, var(--kanban-primary-soft) 28%, var(--kanban-surface-soft));
+  padding: 1px 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
+  color: color-mix(in srgb, var(--kanban-text) 90%, var(--kanban-primary));
 }
 
 .kanban-editor-content blockquote {
-  margin: 10px 0;
+  margin: 14px 0;
   border-left: 3px solid var(--kanban-primary-soft-strong);
-  padding-left: 10px;
-  color: var(--kanban-muted);
+  border-radius: 0 10px 10px 0;
+  background: color-mix(in srgb, var(--kanban-primary-soft) 46%, var(--kanban-surface));
+  padding: 10px 14px;
+  color: color-mix(in srgb, var(--kanban-text) 72%, var(--kanban-muted));
 }
 
 .kanban-editor-content ul,
 .kanban-editor-content ol {
   margin: 0 0 10px;
-  padding-left: 20px;
+  padding-left: 22px;
+}
+
+.kanban-editor-content li+li {
+  margin-top: 3px;
 }
 
 .kanban-editor-content ul {
@@ -2441,12 +2486,41 @@ textarea {
   list-style: decimal;
 }
 
+.kanban-editor-content li::marker {
+  color: var(--kanban-primary-soft-strong);
+  font-weight: 700;
+}
+
+.kanban-editor-content li>p {
+  margin: 0;
+}
+
+.kanban-editor-content li>ul,
+.kanban-editor-content li>ol {
+  margin: 6px 0 0;
+}
+
 .kanban-editor-content pre {
   overflow: auto;
-  border-radius: 8px;
-  background: var(--kanban-surface-soft);
-  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--kanban-border) 88%, var(--kanban-primary-soft));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--kanban-surface-soft) 92%, var(--kanban-surface));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--kanban-surface) 85%, transparent);
+  padding: 12px 14px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.kanban-editor-content pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.kanban-editor-content hr {
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--kanban-border) 76%, var(--kanban-primary-soft));
+  margin: 18px 0;
 }
 
 @keyframes kanban-view-enter {

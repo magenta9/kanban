@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { applyRichTextListContinuation, formatDateRange, isRichTextListActive, isRichTextListContinuationShortcut, isRichTextSubmitShortcut, normalizeDateRange, shouldSyncRichTextEditorContent } from "./kanban";
+import {
+    applyRichTextListIndentation,
+    applyRichTextListContinuation,
+    findRichTextMarkdownLinkSuffix,
+    formatDateRange,
+    isRichTextListActive,
+    isRichTextListIndentShortcut,
+    isRichTextListContinuationShortcut,
+    isRichTextSubmitShortcut,
+    normalizeDateRange,
+    parseRichTextMarkdownLink,
+    resolveRichTextLinkPaste,
+    shouldSyncRichTextEditorContent
+} from "./kanban";
 
 const emptyDocument = { type: "doc", content: [{ type: "paragraph" }] };
 const documentWithText = {
@@ -14,6 +27,56 @@ describe("shouldSyncRichTextEditorContent", () => {
 
     it("skips redundant syncs when values are identical", () => {
         expect(shouldSyncRichTextEditorContent(emptyDocument, emptyDocument)).toBe(false);
+    });
+});
+
+describe("parseRichTextMarkdownLink", () => {
+    it("parses markdown link syntax into a label and href", () => {
+        expect(parseRichTextMarkdownLink("[Roadmap](https://example.com/roadmap)")).toEqual({
+            label: "Roadmap",
+            url: "https://example.com/roadmap"
+        });
+    });
+
+    it("ignores non-http links", () => {
+        expect(parseRichTextMarkdownLink("[Mail](mailto:test@example.com)")).toBeNull();
+    });
+});
+
+describe("findRichTextMarkdownLinkSuffix", () => {
+    it("locates a markdown link at the end of a paragraph", () => {
+        expect(findRichTextMarkdownLinkSuffix("See [Roadmap](https://example.com/roadmap)")).toEqual({
+            label: "Roadmap",
+            url: "https://example.com/roadmap",
+            start: 4,
+            end: 42
+        });
+    });
+
+    it("skips paragraphs without a trailing markdown link", () => {
+        expect(findRichTextMarkdownLinkSuffix("See [Roadmap](https://example.com/roadmap) later")).toBeNull();
+    });
+});
+
+describe("resolveRichTextLinkPaste", () => {
+    it("turns a pasted bare url into a placeholder link", () => {
+        expect(resolveRichTextLinkPaste("https://example.com/roadmap")).toEqual({
+            label: "link",
+            url: "https://example.com/roadmap",
+            selectLabel: true
+        });
+    });
+
+    it("preserves explicit markdown link labels on paste", () => {
+        expect(resolveRichTextLinkPaste("[Roadmap](https://example.com/roadmap)")).toEqual({
+            label: "Roadmap",
+            url: "https://example.com/roadmap",
+            selectLabel: false
+        });
+    });
+
+    it("ignores non-link text", () => {
+        expect(resolveRichTextLinkPaste("Roadmap")).toBeNull();
     });
 });
 
@@ -42,6 +105,16 @@ describe("isRichTextListContinuationShortcut", () => {
 
     it("does not continue lists while composing text", () => {
         expect(isRichTextListContinuationShortcut({ key: "Enter", shiftKey: true, isComposing: true })).toBe(false);
+    });
+});
+
+describe("isRichTextListIndentShortcut", () => {
+    it("handles Tab as the list indent shortcut", () => {
+        expect(isRichTextListIndentShortcut({ key: "Tab", shiftKey: false, isComposing: false })).toBe(true);
+    });
+
+    it("ignores composing input", () => {
+        expect(isRichTextListIndentShortcut({ key: "Tab", shiftKey: false, isComposing: true })).toBe(false);
     });
 });
 
@@ -110,6 +183,60 @@ describe("applyRichTextListContinuation", () => {
                 liftListItem: () => false
             }
         })).toBe(false);
+    });
+});
+
+describe("applyRichTextListIndentation", () => {
+    it("indents the current list item on Tab", () => {
+        const calls: string[] = [];
+
+        const handled = applyRichTextListIndentation({
+            isActive: (name: string) => name === "bulletList",
+            commands: {
+                sinkListItem: () => {
+                    calls.push("sink");
+                    return true;
+                },
+                liftListItem: () => {
+                    calls.push("lift");
+                    return true;
+                }
+            }
+        }, false);
+
+        expect(handled).toBe(true);
+        expect(calls).toEqual(["sink"]);
+    });
+
+    it("outdents the current list item on Shift+Tab", () => {
+        const calls: string[] = [];
+
+        const handled = applyRichTextListIndentation({
+            isActive: (name: string) => name === "orderedList",
+            commands: {
+                sinkListItem: () => {
+                    calls.push("sink");
+                    return true;
+                },
+                liftListItem: () => {
+                    calls.push("lift");
+                    return true;
+                }
+            }
+        }, true);
+
+        expect(handled).toBe(true);
+        expect(calls).toEqual(["lift"]);
+    });
+
+    it("does nothing outside list contexts", () => {
+        expect(applyRichTextListIndentation({
+            isActive: () => false,
+            commands: {
+                sinkListItem: () => false,
+                liftListItem: () => false
+            }
+        }, false)).toBe(false);
     });
 });
 

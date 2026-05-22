@@ -54,10 +54,27 @@ type KeyboardShortcutAction =
 type ShortcutEvent = Pick<KeyboardEvent, "key" | "metaKey" | "shiftKey" | "altKey">;
 type RichTextSubmitShortcutEvent = Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing">;
 type RichTextListContinuationShortcutEvent = Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing">;
+type RichTextListIndentShortcutEvent = Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing">;
 type RichTextSubmitHandler = (json: KanbanRichTextDocument, text: string) => void;
 type RichTextListCommandEditor = Pick<Editor, "isActive"> & {
     commands: Pick<Editor["commands"], "splitListItem" | "liftListItem">;
 };
+type RichTextListIndentCommandEditor = Pick<Editor, "isActive"> & {
+    commands: Pick<Editor["commands"], "sinkListItem" | "liftListItem">;
+};
+
+interface RichTextLinkMatch {
+    label: string;
+    url: string;
+    start: number;
+    end: number;
+}
+
+interface RichTextLinkInsertTarget {
+    label: string;
+    url: string;
+    selectLabel: boolean;
+}
 
 interface SelectOption {
     value: string;
@@ -89,6 +106,8 @@ interface CardDropTarget {
 const priorities: KanbanPriority[] = ["none", "low", "medium", "high", "urgent"];
 const weekdaysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const emptyRichTextDocument = { type: "doc", content: [{ type: "paragraph" }] } as KanbanRichTextDocument;
+const richTextLinkPlaceholder = "link";
+const richTextBareHttpUrlPattern = /^https?:\/\/\S+$/i;
 const keyboardShortcutGroups = [
     {
         title: "Boards",
@@ -1393,6 +1412,7 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
                     <h4>Description</h4>
                     <RichTextEditor
                         value={descriptionJson}
+                        enableMarkdownLinks
                         onChange={(json, text) => { setDescriptionJson(json); setDescriptionText(text); }}
                         onSubmit={(json, text) => {
                             setDescriptionJson(json);
@@ -1555,10 +1575,11 @@ function CustomSelect({ label, value, options, icon, showLabel = true, onChange 
     );
 }
 
-function RichTextEditor({ value, onChange, onSubmit }: {
+function RichTextEditor({ value, onChange, onSubmit, enableMarkdownLinks = false }: {
     value?: KanbanRichTextDocument;
     onChange: (json: KanbanRichTextDocument, text: string) => void;
     onSubmit?: RichTextSubmitHandler;
+    enableMarkdownLinks?: boolean;
 }): JSX.Element {
     const pendingValueRef = useRef<JSONContent | null>(null);
     const onChangeRef = useRef(onChange);
@@ -1575,8 +1596,38 @@ function RichTextEditor({ value, onChange, onSubmit }: {
         content: (value as JSONContent | undefined) ?? { type: "doc", content: [{ type: "paragraph" }] },
         editorProps: {
             attributes: { class: "kanban-editor-content" },
+            handlePaste: (view, event) => {
+                const currentEditor = editorRef.current;
+                if (!enableMarkdownLinks || !currentEditor) return false;
+                const pastedText = event.clipboardData?.getData("text/plain") ?? "";
+                const linkTarget = resolveRichTextLinkPaste(pastedText);
+                if (!linkTarget) return false;
+                event.preventDefault();
+                return insertRichTextLink(currentEditor, { from: view.state.selection.from, to: view.state.selection.to }, linkTarget);
+            },
+            handleTextInput: (view, from, to, text) => {
+                const currentEditor = editorRef.current;
+                if (!enableMarkdownLinks || !currentEditor || text !== ")") return false;
+                const resolvedPosition = view.state.doc.resolve(from);
+                const textBeforeCursor = resolvedPosition.parent.textBetween(0, resolvedPosition.parentOffset, undefined, "\ufffc") + text;
+                const markdownLink = findRichTextMarkdownLinkSuffix(textBeforeCursor);
+                if (!markdownLink) return false;
+                return insertRichTextLink(
+                    currentEditor,
+                    { from: resolvedPosition.start() + markdownLink.start, to },
+                    { label: markdownLink.label, url: markdownLink.url, selectLabel: false }
+                );
+            },
             handleKeyDown: (view, event) => {
                 const currentEditor = editorRef.current;
+                if (currentEditor && isRichTextListIndentShortcut(event) && isRichTextListActive(currentEditor)) {
+                    const handled = applyRichTextListIndentation(currentEditor, event.shiftKey);
+                    if (handled) {
+                        event.preventDefault();
+                        return true;
+                    }
+                    return false;
+                }
                 if (currentEditor && isRichTextListContinuationShortcut(event) && isRichTextListActive(currentEditor)) {
                     const handled = applyRichTextListContinuation(currentEditor);
                     if (handled) {
@@ -1629,6 +1680,64 @@ export function shouldSyncRichTextEditorContent(currentValue: JSONContent, nextV
     return JSON.stringify(currentValue) !== JSON.stringify(nextValue);
 }
 
+export function parseRichTextMarkdownLink(text: string): Pick<RichTextLinkMatch, "label" | "url"> | null {
+    const match = /^\[(?<label>[^\]\n]+)\]\((?<url>https?:\/\/[^\s)]+)\)$/i.exec(text.trim());
+    if (!match?.groups) return null;
+    const { label, url } = match.groups;
+    if (!label || !url) return null;
+    return {
+        label,
+        url
+    };
+}
+
+export function findRichTextMarkdownLinkSuffix(text: string): RichTextLinkMatch | null {
+    const match = /\[(?<label>[^\]\n]+)\]\((?<url>https?:\/\/[^\s)]+)\)$/i.exec(text);
+    if (!match?.groups) return null;
+    const { label, url } = match.groups;
+    if (!label || !url) return null;
+    return {
+        label,
+        url,
+        start: match.index,
+        end: match.index + match[0].length
+    };
+}
+
+export function resolveRichTextLinkPaste(text: string): RichTextLinkInsertTarget | null {
+    const normalizedText = text.trim();
+    const markdownLink = parseRichTextMarkdownLink(normalizedText);
+    if (markdownLink) {
+        return {
+            ...markdownLink,
+            selectLabel: false
+        };
+    }
+    if (!richTextBareHttpUrlPattern.test(normalizedText)) return null;
+    return {
+        label: richTextLinkPlaceholder,
+        url: normalizedText,
+        selectLabel: true
+    };
+}
+
+function insertRichTextLink(editor: Editor, range: { from: number; to: number }, linkTarget: RichTextLinkInsertTarget): boolean {
+    const commandChain = editor
+        .chain()
+        .focus()
+        .insertContentAt(range, {
+            type: "text",
+            text: linkTarget.label,
+            marks: [{ type: "link", attrs: { href: linkTarget.url } }]
+        });
+
+    if (linkTarget.selectLabel) {
+        commandChain.setTextSelection({ from: range.from, to: range.from + linkTarget.label.length });
+    }
+
+    return commandChain.run();
+}
+
 export function isRichTextSubmitShortcut(event: RichTextSubmitShortcutEvent): boolean {
     return event.key === "Enter" && !event.shiftKey && !event.isComposing;
 }
@@ -1637,12 +1746,21 @@ export function isRichTextListContinuationShortcut(event: RichTextListContinuati
     return event.key === "Enter" && event.shiftKey && !event.isComposing;
 }
 
+export function isRichTextListIndentShortcut(event: RichTextListIndentShortcutEvent): boolean {
+    return event.key === "Tab" && !event.isComposing;
+}
+
 export function isRichTextListActive(editor: Pick<Editor, "isActive">): boolean {
     return editor.isActive("orderedList") || editor.isActive("bulletList");
 }
 
 export function applyRichTextListContinuation(editor: RichTextListCommandEditor): boolean {
     return editor.commands.splitListItem("listItem") || editor.commands.liftListItem("listItem");
+}
+
+export function applyRichTextListIndentation(editor: RichTextListIndentCommandEditor, outdent: boolean): boolean {
+    if (!isRichTextListActive(editor)) return false;
+    return outdent ? editor.commands.liftListItem("listItem") : editor.commands.sinkListItem("listItem");
 }
 
 export function isEditableShortcutTarget(target: EventTarget | null): boolean {
