@@ -237,6 +237,7 @@ function subtaskSystemPrompt(): string {
         "Do not repeat the current subtask text, sibling subtasks, or the full card description.",
         "Return only the missing words for the current subtask, not a full sentence when the prefix already exists.",
         "For subtaskBeforeCursor '补齐', a good insert is '验收标准'; a bad insert is '我会补齐验收标准'.",
+        "For subtaskBeforeCursor '整理接口联调并', a good insert is '同步测试结论', not '整理接口联调并同步测试结论'.",
         "Prefer a short actionable fragment that matches the card's existing subtasks.",
         "Do not invent dates, owners, promises, or completion claims that are not in context.",
         "Return {\"insert\":\"\"} if the next text is not obvious.",
