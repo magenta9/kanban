@@ -244,6 +244,7 @@ function subtaskSystemPrompt(): string {
         "Apply suggestionProfile only within this field contract: high brevity means short inserts, high directness means no hedging, medium evidence appetite allows small exploratory continuations only when directly present in or inferable from currentCard.",
         "Do not repeat the current subtask text, sibling subtasks, or the full card description.",
         "Return only the missing words for the current subtask, not a full sentence when the prefix already exists.",
+        "Match the language already used in subtaskBeforeCursor; an English prefix should be completed in English.",
         "If groundedContinuationHint is present, prefer it over generic examples when it fits the cursor.",
         "For subtaskBeforeCursor '整理接口联调并', a good insert is '同步测试结论', not '整理接口联调并同步测试结论'.",
         "For subtaskBeforeCursor '补齐', a good insert is '验收标准'; a bad insert is '我会补齐验收标准'.",

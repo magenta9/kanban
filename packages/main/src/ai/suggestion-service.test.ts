@@ -291,6 +291,7 @@ describe("AI prompt contracts", () => {
             expect(body.messages[0].content).toContain("subtask title");
             expect(body.messages[0].content).toContain("For subtaskBeforeCursor '补齐'");
             expect(body.messages[0].content).toContain("short actionable fragment");
+            expect(body.messages[0].content).toContain("Match the language already used in subtaskBeforeCursor");
             expect(JSON.parse(body.messages[1].content)).toMatchObject({
                 scenario: "subtask",
                 suggestionProfile: { brevity: "high", directness: "high", evidenceAppetite: "medium" },
