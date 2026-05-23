@@ -214,6 +214,7 @@ function descriptionSystemPrompt(): string {
         "Never return any text from blockedInsertions, even with small wording changes.",
         "For numbered-list mode, complete the current list item only; never duplicate or paraphrase previousListItems.",
         "For bullet mode only, return the missing words after the current bullet text; for localLine.before '- 补充构建流程的', insert '关键步骤和验证方式', not '- 补充构建流程的'.",
+        "Use examples only for the same localLine shape; never reuse an example answer for a heading, complete sentence, or different list item.",
         "If textBeforeCursor already names the subject or object, continue with the missing attribute, action, or detail; do not restate that noun.",
         "For example, after '需要分析持有标的的', insert '仓位、盈亏和风险点', not '待分析标的...'.",
         "If the previous list item already asks to clarify scope, data source, and output format, return {\"insert\":\"\"} instead of suggesting the same requirement again.",
