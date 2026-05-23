@@ -361,7 +361,7 @@ function stabilizeReview(review: EvalResult["review"], fixture: AiCompletionFixt
         };
     }
 
-    if (diagnostics.blockedHit || diagnostics.hasReasoningOrFence || !diagnostics.contractOk) {
+    if (diagnostics.blockedHit || diagnostics.insertHasReasoningOrFence || !diagnostics.contractOk) {
         return {
             ...review,
             decision: "fail",
@@ -413,7 +413,8 @@ function collectDiagnostics(fixture: AiCompletionFixture, raw: string, insertion
         expectedEmpty,
         expectedRejectViolated: fixture.expectedBehavior === "reject" && insertion.length > 0,
         unexpectedEmpty: fixture.expectedBehavior === "accept" ? insertion.length === 0 : false,
-        hasReasoningOrFence: /<think>|<\/think>|```/i.test(raw),
+        rawHasReasoningOrFence: /<think>|<\/think>|```/i.test(raw),
+        insertHasReasoningOrFence: /<think>|<\/think>|```/i.test(insertion),
         empty: insertion.length === 0
     };
 }
