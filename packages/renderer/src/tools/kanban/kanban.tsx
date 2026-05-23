@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
 import {
     closestCenter,
     DragOverlay,
@@ -46,37 +46,33 @@ import {
 } from "lucide-react";
 import { getApi } from "../../api";
 import { IconButton, SegmentedControl } from "../../components/tool-layout";
+import {
+    applyRichTextListContinuation,
+    applyRichTextListIndentation,
+    draftCardsForAiContext,
+    findRichTextMarkdownLinkSuffix,
+    formatDateRange,
+    isEditableShortcutTarget,
+    isMarkdownSubmitShortcut,
+    isRichTextListActive,
+    isRichTextListContinuationShortcut,
+    isRichTextListIndentShortcut,
+    isRichTextSubmitShortcut,
+    keyboardShortcutFromEvent,
+    normalizeDateRange,
+    recurrenceSummary,
+    relatedCardsForAiContext,
+    resolveRichTextLinkPaste,
+    shouldApplyInlineCompletion,
+    shouldRequestInlineCompletion,
+    shouldSyncRichTextEditorContent,
+    stableLabelColor,
+    suggestBoardLabelsByPrefix
+} from "./kanban-helpers";
 
 type ViewMode = "kanban" | "list" | "archive";
 
-type KeyboardShortcutAction =
-    | { type: "openHelp" }
-    | { type: "close" }
-    | { type: "toggleBoardList" }
-    | { type: "createCard" }
-    | { type: "createColumn" }
-    | { type: "setView"; view: ViewMode }
-    | { type: "selectBoardByIndex"; index: number };
-
-type ShortcutEvent = Pick<KeyboardEvent, "key" | "metaKey" | "shiftKey" | "altKey">;
-type RichTextSubmitShortcutEvent = Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing">;
-type RichTextListContinuationShortcutEvent = Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing">;
-type RichTextListIndentShortcutEvent = Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing">;
-type MarkdownSubmitShortcutEvent = Pick<KeyboardEvent, "key" | "shiftKey"> & { isComposing?: boolean };
 type RichTextSubmitHandler = (json: KanbanRichTextDocument, text: string) => void;
-type RichTextListCommandEditor = Pick<Editor, "isActive"> & {
-    commands: Pick<Editor["commands"], "splitListItem" | "liftListItem">;
-};
-type RichTextListIndentCommandEditor = Pick<Editor, "isActive"> & {
-    commands: Pick<Editor["commands"], "sinkListItem" | "liftListItem">;
-};
-
-interface RichTextLinkMatch {
-    label: string;
-    url: string;
-    start: number;
-    end: number;
-}
 
 interface RichTextLinkInsertTarget {
     label: string;
@@ -120,8 +116,6 @@ const priorities: KanbanPriority[] = ["none", "low", "medium", "high", "urgent"]
 const recurrenceCycles: KanbanRecurrenceCycle[] = ["daily", "weekly", "monthly"];
 const recurrenceTriggers: KanbanRecurrenceTrigger[] = ["fixed", "completion"];
 const weekdaysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const richTextLinkPlaceholder = "link";
-const richTextBareHttpUrlPattern = /^https?:\/\/\S+$/i;
 const keyboardShortcutGroups = [
     {
         title: "Boards",
@@ -1050,18 +1044,6 @@ function sortedCardsInColumn(cards: KanbanCard[], columnId: string): KanbanCard[
     return cards.filter((card) => card.columnId === columnId).sort((left, right) => left.sortOrder - right.sortOrder);
 }
 
-export function relatedCardsForAiContext(card: KanbanCard, cards: KanbanCard[]): KanbanCard[] {
-    const activeCards = cards.filter((item) => !item.archivedAt && item.id !== card.id);
-    const related = card.labelIds.length > 0
-        ? activeCards.filter((item) => item.labelIds.some((labelId) => card.labelIds.includes(labelId)))
-        : activeCards;
-    return related.sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 20);
-}
-
-export function draftCardsForAiContext(columnId: string, cards: KanbanCard[]): KanbanCard[] {
-    return cards.filter((card) => !card.archivedAt && card.columnId === columnId).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 20);
-}
-
 function cardAiContext(card: KanbanCard, cards: KanbanCard[], labels: KanbanLabel[], columns: KanbanColumn[]): AiSuggestionCardContext {
     return {
         currentCard: card,
@@ -1165,17 +1147,13 @@ function SortableColumn({
             </SortableContext>
             {composerOpen ? (
                 <form className="kanban-card-composer open" onSubmit={(event) => { event.preventDefault(); onCreateCard(); }}>
-                    <CompletionTextInput
-                        inputRef={composerInputRef}
+                    <input
+                        ref={composerInputRef}
                         value={draftTitle}
-                        onChange={onDraftTitleChange}
+                        onChange={(event) => onDraftTitleChange(event.target.value)}
                         placeholder="Task title"
                         autoFocus
-                        ariaLabel="Task title"
-                        minChars={2}
-                        maxChars={15}
-                        field="card-title"
-                        context={{ relatedCards: draftCardsForAiContext(column.id, cards), boardLabels: labels, columnName: column.name }}
+                        aria-label="Task title"
                     />
                     <div className="kanban-card-composer-actions">
                         <button type="submit" disabled={!draftTitle.trim()} aria-label={`Add task to ${column.name}`}>
@@ -1473,10 +1451,9 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
     const [commentDraft, setCommentDraft] = useState("");
     const [tagDraft, setTagDraft] = useState("");
     const [tagEditorOpen, setTagEditorOpen] = useState(false);
-    const [labelSuggestions, setLabelSuggestions] = useState<AiLabelSuggestion[]>([]);
-    const labelSuggestionRequestId = useRef(0);
     const lastSavedSnapshot = useRef("");
     const selectedColumn = columns.find((column) => column.id === columnId);
+    const labelSuggestions = useMemo(() => tagEditorOpen ? suggestBoardLabelsByPrefix(labels, card.labelIds, tagDraft, 5) : [], [tagEditorOpen, labels, card.labelIds, tagDraft]);
     const aiContext = useMemo(() => cardAiContext({
         ...card,
         title,
@@ -1522,7 +1499,6 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
         setCommentDraft("");
         setTagDraft("");
         setTagEditorOpen(false);
-        setLabelSuggestions([]);
     }, [card.id]);
 
     useEffect(() => {
@@ -1550,26 +1526,6 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
         }, 650);
         return () => window.clearTimeout(timeout);
     }, [card.id, title, columnId, priority, startDate, endDate, descriptionMarkdown, descriptionText, subtasks, comments, onSave]);
-
-    useEffect(() => {
-        labelSuggestionRequestId.current += 1;
-        const activeRequestId = labelSuggestionRequestId.current;
-        if (!tagEditorOpen) {
-            setLabelSuggestions([]);
-            return;
-        }
-        setLabelSuggestions([]);
-        const timeout = window.setTimeout(() => {
-            void getApi().ai.suggestLabels({ context: { ...aiContext, currentCard: aiContext.currentCard ?? card }, maxSuggestions: 5, draft: tagDraft })
-                .then((result) => {
-                    if (labelSuggestionRequestId.current === activeRequestId) setLabelSuggestions(result.suggestions);
-                })
-                .catch(() => {
-                    if (labelSuggestionRequestId.current === activeRequestId) setLabelSuggestions([]);
-                });
-        }, tagDraft.trim() ? 300 : 0);
-        return () => window.clearTimeout(timeout);
-    }, [tagEditorOpen, aiContext, tagDraft]);
 
     function addSubtask(): void {
         const nextTitle = subtaskDraft.trim();
@@ -1624,7 +1580,6 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
     function applyLabelSuggestion(suggestion: AiLabelSuggestion): void {
         setTagDraft("");
         setTagEditorOpen(false);
-        setLabelSuggestions([]);
         if (suggestion.existingLabelId && !card.labelIds.includes(suggestion.existingLabelId)) {
             void onToggleLabel(card, suggestion.existingLabelId);
             return;
@@ -1636,15 +1591,11 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
         <aside className="kanban-details" aria-label="Card details">
             <header className="kanban-details-header">
                 <label className="kanban-title-label">
-                    <CompletionTextInput
+                    <input
                         className="kanban-title-input"
-                        ariaLabel="Card title"
+                        aria-label="Card title"
                         value={title}
-                        onChange={setTitle}
-                        minChars={2}
-                        maxChars={15}
-                        field="card-title"
-                        context={aiContext}
+                        onChange={(event) => setTitle(event.target.value)}
                     />
                     <span>Updated {formatDisplayDate(card.updatedAt)}</span>
                 </label>
@@ -1705,7 +1656,7 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
                             </SortableContext>
                         </DndContext>
                         <form className="kanban-inline-add kanban-subtask-add" onSubmit={(event) => { event.preventDefault(); addSubtask(); }}>
-                            <input value={subtaskDraft} onChange={(event) => setSubtaskDraft(event.target.value)} placeholder="Add subtask" />
+                            <input value={subtaskDraft} onChange={(event) => setSubtaskDraft(event.target.value)} placeholder="Add subtask" aria-label="Add subtask" />
                         </form>
                     </div>
                 </section>
@@ -1973,8 +1924,12 @@ function MarkdownTextarea({ value, ariaLabel, onChange, onSubmit }: {
     onChange: (value: string) => void;
     onSubmit?: () => void;
 }): JSX.Element {
+    const ref = useRef<HTMLTextAreaElement | null>(null);
+    useAutoGrowTextarea(ref, value);
+
     return (
         <textarea
+            ref={ref}
             className="kanban-markdown-textarea"
             value={value}
             aria-label={ariaLabel}
@@ -1986,54 +1941,6 @@ function MarkdownTextarea({ value, ariaLabel, onChange, onSubmit }: {
                 onSubmit();
             }}
         />
-    );
-}
-
-function CompletionTextInput({ value, ariaLabel, className, disabled, minChars, maxChars, field, context, placeholder, autoFocus, inputRef, onChange, onBlur, onKeyDown }: {
-    value: string;
-    ariaLabel: string;
-    className?: string;
-    disabled?: boolean;
-    minChars: number;
-    maxChars: number;
-    field: AiTextSuggestionField;
-    context: AiSuggestionCardContext;
-    placeholder?: string;
-    autoFocus?: boolean;
-    inputRef?: (node: HTMLInputElement | null) => void;
-    onChange: (value: string) => void;
-    onBlur?: () => void;
-    onKeyDown?: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
-}): JSX.Element {
-    const ref = useRef<HTMLInputElement | null>(null);
-    const { suggestion, cursor, refreshCursor, clearSuggestion, acceptSuggestion } = useInlineCompletion({ value, minChars, maxChars, field, context, elementRef: ref });
-
-    return (
-        <span className="kanban-completion-wrap">
-            <input
-                ref={(node) => { ref.current = node; inputRef?.(node); }}
-                className={className}
-                value={value}
-                disabled={disabled}
-                autoFocus={autoFocus}
-                placeholder={placeholder}
-                onChange={(event) => { clearSuggestion(); onChange(event.target.value); }}
-                onSelect={refreshCursor}
-                onClick={refreshCursor}
-                onBlur={onBlur}
-                onKeyDown={(event) => {
-                    if (event.key === "Tab" && suggestion) {
-                        event.preventDefault();
-                        const nextValue = acceptSuggestion();
-                        if (nextValue !== null) onChange(nextValue);
-                        return;
-                    }
-                    onKeyDown?.(event);
-                }}
-                aria-label={ariaLabel}
-            />
-            {suggestion ? <span className="kanban-completion-ghost" aria-hidden="true"><span>{cursor.before}</span><strong>{suggestion}</strong></span> : null}
-        </span>
     );
 }
 
@@ -2049,7 +1956,8 @@ function CompletionMarkdownTextarea({ value, ariaLabel, minChars, maxChars, fiel
 }): JSX.Element {
     const ref = useRef<HTMLTextAreaElement | null>(null);
     const [scrollTop, setScrollTop] = useState(0);
-    const { suggestion, cursor, refreshCursor, clearSuggestion, acceptSuggestion } = useInlineCompletion({ value, minChars, maxChars, field, context, elementRef: ref });
+    const { suggestion, cursor, refreshCursor, clearSuggestion, focusCompletion, blurCompletion, acceptSuggestion } = useInlineCompletion({ value, minChars, maxChars, field, context, elementRef: ref });
+    useAutoGrowTextarea(ref, value);
 
     return (
         <span className="kanban-completion-wrap textarea">
@@ -2059,6 +1967,8 @@ function CompletionMarkdownTextarea({ value, ariaLabel, minChars, maxChars, fiel
                 value={value}
                 aria-label={ariaLabel}
                 spellCheck
+                onFocus={focusCompletion}
+                onBlur={blurCompletion}
                 onChange={(event) => { clearSuggestion(); onChange(event.target.value); }}
                 onSelect={refreshCursor}
                 onClick={refreshCursor}
@@ -2080,6 +1990,15 @@ function CompletionMarkdownTextarea({ value, ariaLabel, minChars, maxChars, fiel
     );
 }
 
+function useAutoGrowTextarea(elementRef: MutableRefObject<HTMLTextAreaElement | null>, value: string): void {
+    useLayoutEffect(() => {
+        const element = elementRef.current;
+        if (!element) return;
+        element.style.height = "0px";
+        element.style.height = `${element.scrollHeight}px`;
+    }, [elementRef, value]);
+}
+
 function useInlineCompletion<TElement extends HTMLInputElement | HTMLTextAreaElement>({ value, minChars, maxChars, field, context, elementRef }: {
     value: string;
     minChars: number;
@@ -2092,10 +2011,14 @@ function useInlineCompletion<TElement extends HTMLInputElement | HTMLTextAreaEle
     cursor: CursorText;
     refreshCursor: () => void;
     clearSuggestion: () => void;
+    focusCompletion: () => void;
+    blurCompletion: () => void;
     acceptSuggestion: () => string | null;
 } {
     const [suggestion, setSuggestion] = useState("");
     const [cursor, setCursor] = useState<CursorText>({ before: value, after: "" });
+    const [focused, setFocused] = useState(false);
+    const [requestTick, setRequestTick] = useState(0);
     const requestIdRef = useRef(0);
     const contextRef = useRef(context);
 
@@ -2114,9 +2037,24 @@ function useInlineCompletion<TElement extends HTMLInputElement | HTMLTextAreaEle
         setSuggestion("");
         setCursor(currentCursor());
         requestIdRef.current += 1;
+        if (focused) setRequestTick((current) => current + 1);
     }
 
     function clearSuggestion(): void {
+        setSuggestion("");
+        requestIdRef.current += 1;
+    }
+
+    function focusCompletion(): void {
+        setFocused(true);
+        setCursor(currentCursor());
+        setSuggestion("");
+        requestIdRef.current += 1;
+        setRequestTick((current) => current + 1);
+    }
+
+    function blurCompletion(): void {
+        setFocused(false);
         setSuggestion("");
         requestIdRef.current += 1;
     }
@@ -2139,20 +2077,24 @@ function useInlineCompletion<TElement extends HTMLInputElement | HTMLTextAreaEle
         setSuggestion("");
         const activeRequestId = requestIdRef.current + 1;
         requestIdRef.current = activeRequestId;
-        if (nextCursor.before.trim().length < minChars) return;
+        if (!shouldRequestInlineCompletion(nextCursor.before, nextCursor.after, minChars, focused)) return;
+        const requestedCursor = nextCursor;
         const timeout = window.setTimeout(() => {
             void getApi().ai.suggestText({ field, textBeforeCursor: nextCursor.before, textAfterCursor: nextCursor.after, maxChars, context: contextRef.current })
                 .then((result) => {
-                    if (requestIdRef.current === activeRequestId) setSuggestion(result.suggestion ?? "");
+                    const liveCursor = currentCursor();
+                    if (requestIdRef.current === activeRequestId && shouldApplyInlineCompletion(requestedCursor, liveCursor, minChars, focused)) {
+                        setSuggestion(result.suggestion ?? "");
+                    }
                 })
                 .catch(() => {
                     if (requestIdRef.current === activeRequestId) setSuggestion("");
                 });
         }, 500);
         return () => window.clearTimeout(timeout);
-    }, [value, minChars, maxChars, field, elementRef]);
+    }, [value, minChars, maxChars, field, elementRef, focused, requestTick]);
 
-    return { suggestion, cursor, refreshCursor, clearSuggestion, acceptSuggestion };
+    return { suggestion, cursor, refreshCursor, clearSuggestion, focusCompletion, blurCompletion, acceptSuggestion };
 }
 
 function MarkdownBlock({ markdown }: { markdown: string }): JSX.Element {
@@ -2264,51 +2206,6 @@ function RichTextEditor({ value, onChange, onSubmit, enableMarkdownLinks = false
     );
 }
 
-export function shouldSyncRichTextEditorContent(currentValue: JSONContent, nextValue: JSONContent): boolean {
-    return JSON.stringify(currentValue) !== JSON.stringify(nextValue);
-}
-
-export function parseRichTextMarkdownLink(text: string): Pick<RichTextLinkMatch, "label" | "url"> | null {
-    const match = /^\[(?<label>[^\]\n]+)\]\((?<url>https?:\/\/[^\s)]+)\)$/i.exec(text.trim());
-    if (!match?.groups) return null;
-    const { label, url } = match.groups;
-    if (!label || !url) return null;
-    return {
-        label,
-        url
-    };
-}
-
-export function findRichTextMarkdownLinkSuffix(text: string): RichTextLinkMatch | null {
-    const match = /\[(?<label>[^\]\n]+)\]\((?<url>https?:\/\/[^\s)]+)\)$/i.exec(text);
-    if (!match?.groups) return null;
-    const { label, url } = match.groups;
-    if (!label || !url) return null;
-    return {
-        label,
-        url,
-        start: match.index,
-        end: match.index + match[0].length
-    };
-}
-
-export function resolveRichTextLinkPaste(text: string): RichTextLinkInsertTarget | null {
-    const normalizedText = text.trim();
-    const markdownLink = parseRichTextMarkdownLink(normalizedText);
-    if (markdownLink) {
-        return {
-            ...markdownLink,
-            selectLabel: false
-        };
-    }
-    if (!richTextBareHttpUrlPattern.test(normalizedText)) return null;
-    return {
-        label: richTextLinkPlaceholder,
-        url: normalizedText,
-        selectLabel: true
-    };
-}
-
 function insertRichTextLink(editor: Editor, range: { from: number; to: number }, linkTarget: RichTextLinkInsertTarget): boolean {
     const commandChain = editor
         .chain()
@@ -2324,65 +2221,6 @@ function insertRichTextLink(editor: Editor, range: { from: number; to: number },
     }
 
     return commandChain.run();
-}
-
-export function isRichTextSubmitShortcut(event: RichTextSubmitShortcutEvent): boolean {
-    return event.key === "Enter" && !event.shiftKey && !event.isComposing;
-}
-
-export function isRichTextListContinuationShortcut(event: RichTextListContinuationShortcutEvent): boolean {
-    return event.key === "Enter" && event.shiftKey && !event.isComposing;
-}
-
-export function isRichTextListIndentShortcut(event: RichTextListIndentShortcutEvent): boolean {
-    return event.key === "Tab" && !event.isComposing;
-}
-
-export function isRichTextListActive(editor: Pick<Editor, "isActive">): boolean {
-    return editor.isActive("orderedList") || editor.isActive("bulletList");
-}
-
-export function applyRichTextListContinuation(editor: RichTextListCommandEditor): boolean {
-    return editor.commands.splitListItem("listItem") || editor.commands.liftListItem("listItem");
-}
-
-export function applyRichTextListIndentation(editor: RichTextListIndentCommandEditor, outdent: boolean): boolean {
-    if (!isRichTextListActive(editor)) return false;
-    return outdent ? editor.commands.liftListItem("listItem") : editor.commands.sinkListItem("listItem");
-}
-
-export function isMarkdownSubmitShortcut(event: MarkdownSubmitShortcutEvent): boolean {
-    return event.key === "Enter" && !event.shiftKey && !event.isComposing;
-}
-
-export function isEditableShortcutTarget(target: EventTarget | null): boolean {
-    if (!(target instanceof Element)) return false;
-    let element: Element | null = target;
-    while (element) {
-        if (element.matches("input, textarea, select")) return true;
-        if (element instanceof HTMLElement && (element.isContentEditable || element.contentEditable === "true" || element.getAttribute("contenteditable") === "")) return true;
-        element = element.parentElement;
-    }
-    return false;
-}
-
-export function keyboardShortcutFromEvent(event: ShortcutEvent, editableTarget: boolean): KeyboardShortcutAction | null {
-    if (event.key === "Escape") return { type: "close" };
-    if (event.metaKey && !event.shiftKey && !event.altKey && event.key === "/") return { type: "openHelp" };
-    if (editableTarget || !event.metaKey || event.altKey) return null;
-
-    if (!event.shiftKey && /^[1-9]$/.test(event.key)) {
-        return { type: "selectBoardByIndex", index: Number(event.key) - 1 };
-    }
-
-    const key = event.key.toLowerCase();
-    if (!event.shiftKey && key === "b") return { type: "toggleBoardList" };
-    if (!event.shiftKey && key === "k") return { type: "setView", view: "kanban" };
-    if (!event.shiftKey && key === "l") return { type: "setView", view: "list" };
-    if (!event.shiftKey && key === "a") return { type: "setView", view: "archive" };
-    if (!event.shiftKey && key === "n") return { type: "createCard" };
-    if (event.shiftKey && key === "n") return { type: "createColumn" };
-    return null;
 }
 
 function PriorityBadge({ priority }: { priority: KanbanPriority }): JSX.Element {
@@ -2405,21 +2243,14 @@ function LabelChip({ label }: { label: KanbanLabel }): JSX.Element {
     return <span className="kanban-label-chip" style={{ borderColor: label.color, color: label.color }}>{label.name}</span>;
 }
 
-export function recurrenceSummary(card: KanbanCard): string {
-    if (!card.recurrence) return "未开启周期";
-    const cycle = recurrenceCycleLabel(card.recurrence.cycle);
-    const trigger = card.recurrence.trigger === "fixed" ? "固定时间" : "完成后";
-    return card.recurrence.status === "blocked" ? `已阻塞：${card.recurrence.blockedReason ?? "需要处理"}` : `${cycle} · ${trigger}`;
+function recurrenceTriggerLabel(trigger: KanbanRecurrenceTrigger): string {
+    return trigger === "fixed" ? "固定时间" : "完成后";
 }
 
 function recurrenceCycleLabel(cycle: KanbanRecurrenceCycle): string {
     if (cycle === "daily") return "每日";
     if (cycle === "weekly") return "每周";
     return "每月";
-}
-
-function recurrenceTriggerLabel(trigger: KanbanRecurrenceTrigger): string {
-    return trigger === "fixed" ? "固定时间" : "完成后";
 }
 
 function cardDetailsSnapshot(value: {
@@ -2436,25 +2267,11 @@ function cardDetailsSnapshot(value: {
     return JSON.stringify(value);
 }
 
-export function stableLabelColor(boardId: string, name: string): string {
-    const colors = ["#756858", "#6f7a43", "#b36a3c", "#8f6f4f", "#9a5f54"];
-    const normalized = `${boardId}:${name.trim().toLowerCase().replace(/\s+/g, " ")}`;
-    let hash = 0;
-    for (let index = 0; index < normalized.length; index += 1) {
-        hash = (hash * 31 + normalized.charCodeAt(index)) >>> 0;
-    }
-    return colors[hash % colors.length] ?? "#756858";
-}
-
 interface CalendarCell {
     day: number;
     month: number;
     year: number;
     otherMonth: boolean;
-}
-
-export function normalizeDateRange(startDate: number, endDate: number): { startDate: number; endDate: number } {
-    return startDate <= endDate ? { startDate, endDate } : { startDate: endDate, endDate: startDate };
 }
 
 function calendarCells(year: number, month: number): CalendarCell[] {
@@ -2491,10 +2308,6 @@ function formatDisplayDate(timestamp: number): string {
     return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function formatDisplayDateWithYear(timestamp: number): string {
-    return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-}
-
 function cardStartDate(card: KanbanCard): number | undefined {
     return card.startDate ?? card.dueDate;
 }
@@ -2505,21 +2318,6 @@ function cardEndDate(card: KanbanCard): number | undefined {
 
 function formatCardDateRange(card: KanbanCard): string {
     return formatDateRange(cardStartDate(card), cardEndDate(card));
-}
-
-export function formatDateRange(startDate?: number, endDate?: number): string {
-    if (startDate === undefined && endDate === undefined) return "No date";
-    const start = startDate ?? endDate;
-    const end = endDate ?? startDate;
-    if (start === undefined || end === undefined) return "No date";
-    if (start === end) return formatDisplayDate(start);
-
-    const startYear = new Date(start).getFullYear();
-    const endYear = new Date(end).getFullYear();
-    const currentYear = new Date().getFullYear();
-    if (startYear !== endYear) return `${formatDisplayDateWithYear(start)} - ${formatDisplayDateWithYear(end)}`;
-    if (endYear !== currentYear) return `${formatDisplayDate(start)} - ${formatDisplayDateWithYear(end)}`;
-    return `${formatDisplayDate(start)} - ${formatDisplayDate(end)}`;
 }
 
 function errorMessage(error: unknown): string {

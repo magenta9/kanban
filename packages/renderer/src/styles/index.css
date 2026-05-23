@@ -2045,7 +2045,8 @@ textarea {
   font-size: 13px;
   line-height: 1.6;
   outline: none;
-  resize: vertical;
+  overflow: hidden;
+  resize: none;
 }
 
 .kanban-comment-form .kanban-markdown-textarea {
@@ -2061,6 +2062,10 @@ textarea {
   position: relative;
   display: block;
   width: 100%;
+}
+
+.kanban-completion-wrap.title {
+  height: 38px;
 }
 
 .kanban-completion-wrap>input,
@@ -2085,6 +2090,15 @@ textarea {
   overflow: hidden;
 }
 
+.kanban-completion-prefix {
+  visibility: hidden;
+}
+
+.kanban-completion-line {
+  display: inline-block;
+  white-space: inherit;
+}
+
 .kanban-completion-ghost.textarea {
   padding: 12px;
   font-size: 13px;
@@ -2093,9 +2107,36 @@ textarea {
   word-break: break-word;
 }
 
+.kanban-completion-ghost.title {
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  font-size: 17px;
+  font-weight: 760;
+  line-height: 1.24;
+}
+
 .kanban-completion-ghost strong {
-  color: rgba(95, 111, 135, 0.48);
-  font-weight: 400;
+  color: rgba(95, 111, 135, 0.58);
+  font-weight: 450;
+}
+
+.kanban-completion-ghost.title strong {
+  font-size: inherit;
+  font-weight: 760;
+  color: rgba(95, 111, 135, 0.5);
+}
+
+.kanban-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .kanban-comment-form textarea:not(.kanban-markdown-textarea) {

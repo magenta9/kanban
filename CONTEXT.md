@@ -54,9 +54,6 @@ A card that is still part of the board's current work context.
 **Archived Card**:
 A card that has been removed from the board's current work context without being deleted.
 
-**Related Card**:
-An active card on the same board that helps interpret the current card. When the current card has labels, Related Cards share at least one label with it; when it has no labels, Related Cards are the board's most recently updated active cards. AI context uses at most the 20 most recently updated Related Cards.
-
 **Card Title**:
 The short name of a card. References to title completion in this context mean Card Title completion, not Board or Column naming.
 
@@ -78,7 +75,10 @@ _Avoid_: Auto-write, auto-fill
 The text or Markdown fragment inserted when an Inline Completion Suggestion is accepted. Description and Comment completion fragments may use common Markdown structures, including lists, but stay short.
 
 **Conservative Suggestion**:
-An AI suggestion that may use current and related card context, but only when the suggested content is supported by that context. It must not invent unsupported people, dates, conclusions, or requirements.
+An AI suggestion that may use the current card context and any board-scoped constraints needed to keep the suggestion valid, but only when the suggested content is supported by that context. It must not invent unsupported people, dates, conclusions, or requirements.
+
+**Suggestion Profile**:
+A named set of style and generation-policy constraints that guides an Inline Completion Suggestion. Tone is one part of a Suggestion Profile, not the whole profile.
 
 ## Example Dialogue
 
@@ -102,9 +102,9 @@ Dev: Are Comments part of a Card's context when asking for an Inline Completion 
 
 Domain expert: Yes. Comments are part of the Card's working context.
 
-Dev: Should Archived Cards be used as related Cards for AI context?
+Dev: Should an Inline Completion Suggestion use other Cards on the Board as context?
 
-Domain expert: No. Related Cards are Active Cards only.
+Domain expert: No. It should stay grounded in the current Card. Board-scoped constraints such as existing Labels may be included only when needed to keep the suggestion valid.
 
 Dev: Is a card completed because its status says Done?
 
@@ -118,26 +118,18 @@ Dev: If I edit an old occurrence after it handed off the Recurrence Baton, does 
 
 Domain expert: No. Only the card currently holding the Recurrence Baton updates the Series Template.
 
-Dev: If 50 Active Cards share a Label with the current Card, are all 50 Related Cards?
-
-Domain expert: They are related in the broad sense, but AI context uses at most the 20 most recently updated Related Cards.
-
-Dev: Are Related Cards sent as title-only references?
-
-Domain expert: No. Related Cards are part of the AI context with their full card information, including Comments and Subtasks.
-
-Dev: If a Card has no Labels, does it have no Related Cards?
-
-Domain expert: It still has Related Cards for AI context: the most recently updated Active Cards on the same Board.
-
 Dev: Can a suggestion invent a plausible deadline if related Cards mention similar work?
 
 Domain expert: No. A Conservative Suggestion can use supported context, but it must not invent unsupported facts.
+
+Dev: Is '简洁务实' only a tone choice?
+
+Domain expert: No. That is a Suggestion Profile. Tone is only one part of it, alongside generation-policy constraints such as how conservative the suggestion should be.
 
 Dev: Does description completion always have to be one sentence?
 
 Domain expert: No. It is a short Completion Fragment, which may be a sentence, list item, or small Markdown fragment.
 
-Dev: Does a Draft Card have Related Cards by shared Label?
+Dev: Does a Draft Card still have enough context for an Inline Completion Suggestion?
 
-Domain expert: No. A Draft Card has no labels yet, so AI context uses its Board labels and recent Active Cards from its Column instead.
+Domain expert: Yes. A Draft Card can still use its own draft content and any board-scoped constraints needed to keep the suggestion valid.

@@ -16,9 +16,14 @@ import {
     recurrenceSummary,
     resolveRichTextLinkPaste,
     stableLabelColor,
-    shouldSyncRichTextEditorContent
-} from "./kanban";
-import type { KanbanCard } from "@kanban/shared";
+    suggestBoardLabelsByPrefix,
+    isInlineCompletionAcceptShortcut,
+    shouldApplyInlineCompletion,
+    shouldRequestInlineCompletion,
+    shouldSyncRichTextEditorContent,
+    buildLabelPrefixIndex
+} from "./kanban-helpers";
+import type { KanbanCard, KanbanLabel } from "@kanban/shared";
 
 const emptyDocument = { type: "doc", content: [{ type: "paragraph" }] };
 const documentWithText = {
@@ -41,6 +46,10 @@ function testCard(patch: Partial<KanbanCard>): KanbanCard {
         comments: [],
         ...patch
     };
+}
+
+function testLabel(id: string, name: string): KanbanLabel {
+    return { id, boardId: "board", name, color: "#64748b" };
 }
 
 describe("shouldSyncRichTextEditorContent", () => {
@@ -155,6 +164,51 @@ describe("AI context helpers", () => {
 
     it("returns stable label colors for same board and normalized name", () => {
         expect(stableLabelColor("board", " Product  Ops ")).toBe(stableLabelColor("board", "product ops"));
+    });
+});
+
+describe("board label prefix suggestions", () => {
+    const labels = [testLabel("trade", "Trade"), testLabel("bug", "Bug"), testLabel("backend", "Backend")];
+
+    it("builds a case-insensitive prefix index for board labels", () => {
+        const index = buildLabelPrefixIndex(labels);
+        expect(index.get("b")?.map((label) => label.name)).toEqual(["Backend", "Bug"]);
+        expect(index.get("tr")?.map((label) => label.name)).toEqual(["Trade"]);
+    });
+
+    it("suggests unattached board labels by prefix", () => {
+        expect(suggestBoardLabelsByPrefix(labels, ["backend"], "b", 5)).toEqual([{ name: "Bug", existingLabelId: "bug" }]);
+    });
+
+    it("uses the empty prefix for initial local tag suggestions", () => {
+        expect(suggestBoardLabelsByPrefix(labels, [], "", 2)).toEqual([
+            { name: "Backend", existingLabelId: "backend" },
+            { name: "Bug", existingLabelId: "bug" }
+        ]);
+    });
+});
+
+describe("inline completion focus guard", () => {
+    it("does not request suggestions for an unfocused mounted field", () => {
+        expect(shouldRequestInlineCompletion("复盘持有标的", "", 2, false)).toBe(false);
+    });
+
+    it("requests suggestions only when focused at the end and over the minimum length", () => {
+        expect(shouldRequestInlineCompletion("复盘", "", 2, true)).toBe(true);
+        expect(shouldRequestInlineCompletion("复盘", "持有标的", 2, true)).toBe(false);
+        expect(shouldRequestInlineCompletion(" ", "", 2, true)).toBe(false);
+    });
+
+    it("does not apply stale suggestions after the cursor moves", () => {
+        expect(shouldApplyInlineCompletion({ before: "复盘持有标的", after: "" }, { before: "复盘", after: "持有标的" }, 2, true)).toBe(false);
+        expect(shouldApplyInlineCompletion({ before: "复盘持有标的", after: "" }, { before: "复盘持有标的", after: "" }, 2, true)).toBe(true);
+    });
+
+    it("accepts inline suggestions with Tab only", () => {
+        expect(isInlineCompletionAcceptShortcut("Tab", "description")).toBe(true);
+        expect(isInlineCompletionAcceptShortcut("Tab", "subtask")).toBe(true);
+        expect(isInlineCompletionAcceptShortcut("ArrowRight", "description")).toBe(false);
+        expect(isInlineCompletionAcceptShortcut("End", "comment")).toBe(false);
     });
 });
 

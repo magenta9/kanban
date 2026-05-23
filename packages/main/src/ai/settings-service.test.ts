@@ -161,8 +161,8 @@ describe("ollama native chat helpers", () => {
     });
 
     it("disables native Ollama thinking and limits predictions", () => {
-        expect(ollamaChatBody({ model: "qwen3.5:2b", messages: [{ role: "user", content: "ok" }], maxTokens: 12 })).toMatchObject({
-            model: "qwen3.5:2b",
+        expect(ollamaChatBody({ model: "qwen3.5:2b-mlx", messages: [{ role: "user", content: "ok" }], maxTokens: 12 })).toMatchObject({
+            model: "qwen3.5:2b-mlx",
             stream: false,
             think: false,
             options: { temperature: 0.2, num_predict: 12 }

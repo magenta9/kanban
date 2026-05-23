@@ -218,7 +218,7 @@ export interface AiTestConnectionResult {
     durationMs?: number;
 }
 
-export type AiTextSuggestionField = "card-title" | "description" | "comment";
+export type AiTextSuggestionField = "description" | "subtask" | "comment";
 
 export interface AiSuggestionCardContext {
     currentCard?: KanbanCard;
