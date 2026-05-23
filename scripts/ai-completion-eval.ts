@@ -259,7 +259,6 @@ async function reviewCompletion(
         cursor: { before: fixture.textBeforeCursor, after: fixture.textAfterCursor },
         maxChars: fixture.maxChars,
         blockedInsertions: fixture.blockedInsertions,
-        prompt: messages,
         modelOutput: { raw, parsedInsert: insertion },
         diagnostics
     };
