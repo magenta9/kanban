@@ -290,7 +290,6 @@ function subtaskPromptInput(input: AiTextSuggestionInput, profile: SuggestionPro
         subtaskBeforeCursor: tailText(input.textBeforeCursor, 400),
         subtaskAfterCursor: headText(input.textAfterCursor, 200),
         localLine,
-        cursorHint: subtaskCursorHint(input.textBeforeCursor),
         maxChars: input.maxChars,
         currentCard: compactCurrentCard(input.context),
         siblingSubtasks: input.context.currentCard?.subtasks.slice(0, 8).map((subtask) => subtask.title).filter(Boolean) ?? [],
@@ -383,14 +382,6 @@ function commentMode(textBeforeCursor: string): "reply" | "status" | "action" | 
     if (/^(todo|action|next)\b/.test(trimmed) || trimmed.startsWith("下一步") || trimmed.startsWith("待办")) return "action";
     if (/^(status|update)\b/.test(trimmed) || trimmed.startsWith("进展") || trimmed.startsWith("状态")) return "status";
     return "note";
-}
-
-function subtaskCursorHint(textBeforeCursor: string): string {
-    const trimmed = textBeforeCursor.trim();
-    if (trimmed.endsWith("并")) return "Complete the action after 并 with a short verb-object fragment.";
-    if (trimmed.endsWith("的")) return "Complete the missing object after 的; do not add owner, date, or promise.";
-    if (/。$|[.!?]$/.test(trimmed)) return "The subtask already reads complete; prefer an empty insert.";
-    return "Complete only the missing suffix for this subtask title.";
 }
 
 function recentComments(context: AiTextSuggestionInput["context"]): string[] {
