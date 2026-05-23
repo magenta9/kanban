@@ -781,6 +781,7 @@ function AiSettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
     const [pending, setPending] = useState(false);
     const [testResult, setTestResult] = useState<AiTestConnectionResult | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const connectionError = settings?.lastError?.scope === "testConnection" ? settings.lastError.message : null;
 
     useEffect(() => {
         let active = true;
@@ -862,21 +863,21 @@ function AiSettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
                     </label>
                     <label>
                         <span>Base URL</span>
-                        <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.minimaxi.com/v1" />
+                        <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="http://localhost:11434/v1" />
                     </label>
                     <label>
                         <span>Model</span>
-                        <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="MiniMax-M2.7" />
+                        <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="llama3.2" />
                     </label>
                     <label>
                         <span>API key</span>
-                        <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" placeholder={settings?.hasApiKey ? "Saved key will be kept" : "sk-..."} />
+                        <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" placeholder={settings?.hasApiKey ? "Saved key will be kept" : "Optional for Ollama"} />
                     </label>
                     <div className={`kanban-ai-status ${settings?.configured ? "configured" : ""}`}>
                         {settings?.configured ? "Configured" : "Not configured"}
                     </div>
                     {testResult ? <p className={testResult.ok ? "kanban-ai-result ok" : "kanban-ai-result"} aria-live="polite">{testResult.ok ? <ArrowRight size={14} /> : null}<span>{testResult.message}</span></p> : null}
-                    {!testResult && settings?.lastError ? <p className="kanban-ai-result">{settings.lastError.message}</p> : null}
+                    {!testResult && connectionError ? <p className="kanban-ai-result">{connectionError}</p> : null}
                     {error ? <p className="kanban-ai-result">{error}</p> : null}
                 </div>
                 <footer>
@@ -1557,14 +1558,18 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
             setLabelSuggestions([]);
             return;
         }
-        void getApi().ai.suggestLabels({ context: { ...aiContext, currentCard: aiContext.currentCard ?? card }, maxSuggestions: 5 })
-            .then((result) => {
-                if (labelSuggestionRequestId.current === activeRequestId) setLabelSuggestions(result.suggestions);
-            })
-            .catch(() => {
-                if (labelSuggestionRequestId.current === activeRequestId) setLabelSuggestions([]);
-            });
-    }, [tagEditorOpen, aiContext]);
+        setLabelSuggestions([]);
+        const timeout = window.setTimeout(() => {
+            void getApi().ai.suggestLabels({ context: { ...aiContext, currentCard: aiContext.currentCard ?? card }, maxSuggestions: 5, draft: tagDraft })
+                .then((result) => {
+                    if (labelSuggestionRequestId.current === activeRequestId) setLabelSuggestions(result.suggestions);
+                })
+                .catch(() => {
+                    if (labelSuggestionRequestId.current === activeRequestId) setLabelSuggestions([]);
+                });
+        }, tagDraft.trim() ? 300 : 0);
+        return () => window.clearTimeout(timeout);
+    }, [tagEditorOpen, aiContext, tagDraft]);
 
     function addSubtask(): void {
         const nextTitle = subtaskDraft.trim();
@@ -2043,6 +2048,7 @@ function CompletionMarkdownTextarea({ value, ariaLabel, minChars, maxChars, fiel
     onSubmit?: () => void;
 }): JSX.Element {
     const ref = useRef<HTMLTextAreaElement | null>(null);
+    const [scrollTop, setScrollTop] = useState(0);
     const { suggestion, cursor, refreshCursor, clearSuggestion, acceptSuggestion } = useInlineCompletion({ value, minChars, maxChars, field, context, elementRef: ref });
 
     return (
@@ -2056,6 +2062,7 @@ function CompletionMarkdownTextarea({ value, ariaLabel, minChars, maxChars, fiel
                 onChange={(event) => { clearSuggestion(); onChange(event.target.value); }}
                 onSelect={refreshCursor}
                 onClick={refreshCursor}
+                onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
                 onKeyDown={(event) => {
                     if (event.key === "Tab" && suggestion) {
                         event.preventDefault();
@@ -2068,7 +2075,7 @@ function CompletionMarkdownTextarea({ value, ariaLabel, minChars, maxChars, fiel
                     onSubmit();
                 }}
             />
-            {suggestion ? <span className="kanban-completion-ghost textarea" aria-hidden="true"><span>{cursor.before}</span><strong>{suggestion}</strong></span> : null}
+            {suggestion ? <span className="kanban-completion-ghost textarea" style={{ transform: `translateY(${-scrollTop}px)` }} aria-hidden="true"><span>{cursor.before}</span><strong>{suggestion}</strong></span> : null}
         </span>
     );
 }

@@ -194,11 +194,21 @@ export interface SaveAiSettingsInput {
 }
 
 export interface AiLogEntry {
-    timestamp: number;
+    timestamp: string;
+    timestampMs?: number;
+    level?: "info" | "warn" | "error";
     scope: string;
+    scenario?: string;
+    event?: string;
+    attempt?: number;
+    prompt?: AiLogPrompt;
     message: string;
     statusCode?: number;
     durationMs?: number;
+}
+
+export interface AiLogPrompt {
+    messages: Array<{ role: string; content: string }>;
 }
 
 export interface AiTestConnectionResult {
@@ -232,6 +242,7 @@ export interface AiTextSuggestionResult {
 export interface AiLabelSuggestionInput {
     context: AiSuggestionCardContext & { currentCard: KanbanCard };
     maxSuggestions: number;
+    draft?: string;
 }
 
 export interface AiLabelSuggestion {

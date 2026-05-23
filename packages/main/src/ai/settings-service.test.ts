@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AiSettingsService, apiKeyValidationMessage, chatCompletionHeaders, chatCompletionsUrl, responseErrorDetail, type SecretCodec } from "./settings-service";
+import { AiSettingsService, apiKeyValidationMessage, chatCompletionHeaders, chatCompletionProviderOptions, chatCompletionsUrl, ollamaChatBody, ollamaChatUrl, providerRequiresApiKey, providerUsesOllamaNativeChat, responseErrorDetail, type SecretCodec } from "./settings-service";
 
 const codec: SecretCodec = {
     isAvailable: () => true,
@@ -43,12 +43,48 @@ describe("AiSettingsService", () => {
         await expect(service.testConnection()).resolves.toEqual({ ok: false, message: "AI settings are incomplete." });
     });
 
+    it("configures local Ollama-compatible providers without an API key", async () => {
+        const { service, logPath } = createService();
+        service.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
+        vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+            expect(url).toBe("http://localhost:11434/api/chat");
+            expect(init.headers).toEqual({ "Content-Type": "application/json" });
+            expect(JSON.parse(String(init.body))).toMatchObject({ model: "llama3.2", stream: false, think: false, options: { num_predict: 5 } });
+            return new Response(JSON.stringify({ message: { content: "ok" } }), { status: 200 });
+        }));
+
+        await expect(service.testConnection()).resolves.toMatchObject({ ok: true });
+        expect(service.getSettings()).toMatchObject({ configured: true, hasApiKey: false });
+        const entry = JSON.parse(readFileSync(logPath, "utf8").trim()) as Record<string, unknown>;
+        expect(entry).toMatchObject({
+            level: "info",
+            scope: "testConnection",
+            scenario: "ai-settings.connection-test",
+            event: "success",
+            statusCode: 200,
+            durationMs: expect.any(Number)
+        });
+        expect(entry.timestamp).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/));
+    });
+
+    it("does not forward saved API keys to Ollama-compatible providers", async () => {
+        const { service } = createService();
+        service.saveSettings({ enabled: true, baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M2.7", apiKey: "remote-key" });
+        service.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
+        vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+            expect(init.headers).toEqual({ "Content-Type": "application/json" });
+            return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+        }));
+
+        await expect(service.testConnection()).resolves.toMatchObject({ ok: true });
+    });
+
     it("includes provider error details when connection testing fails", async () => {
         const { service } = createService();
         service.saveSettings({ enabled: true, baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M2.7", apiKey: "bad-key" });
         vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
             expect(init.headers).toMatchObject({ "Authorization": "Bearer bad-key", "Content-Type": "application/json" });
-            expect(JSON.parse(String(init.body))).toMatchObject({ temperature: 0.2, max_completion_tokens: 5 });
+            expect(JSON.parse(String(init.body))).toMatchObject({ temperature: 0.2, max_completion_tokens: 5, reasoning_split: true });
             return new Response(JSON.stringify({ base_resp: { status_msg: "invalid api key" } }), { status: 401 });
         }));
 
@@ -100,6 +136,45 @@ describe("chatCompletionHeaders", () => {
             "Authorization": "Bearer secret",
             "Content-Type": "application/json"
         });
+    });
+
+    it("omits Authorization when no API key is needed", () => {
+        expect(chatCompletionHeaders("")).toEqual({
+            "Content-Type": "application/json"
+        });
+    });
+});
+
+describe("chatCompletionProviderOptions", () => {
+    it("sets provider-specific reasoning options only for matching hosts", () => {
+        expect(chatCompletionProviderOptions("https://api.minimaxi.com/v1")).toEqual({ reasoning_split: true });
+        expect(chatCompletionProviderOptions("http://localhost:11434/v1")).toEqual({});
+        expect(chatCompletionProviderOptions("https://api.openai.com/v1")).toEqual({});
+    });
+});
+
+describe("ollama native chat helpers", () => {
+    it("resolves native chat URLs from OpenAI-compatible Ollama roots", () => {
+        expect(ollamaChatUrl("http://localhost:11434/v1")).toBe("http://localhost:11434/api/chat");
+        expect(providerUsesOllamaNativeChat("http://127.0.0.1:11434/v1")).toBe(true);
+        expect(providerUsesOllamaNativeChat("https://api.openai.com/v1")).toBe(false);
+    });
+
+    it("disables native Ollama thinking and limits predictions", () => {
+        expect(ollamaChatBody({ model: "qwen3.5:2b", messages: [{ role: "user", content: "ok" }], maxTokens: 12 })).toMatchObject({
+            model: "qwen3.5:2b",
+            stream: false,
+            think: false,
+            options: { temperature: 0.2, num_predict: 12 }
+        });
+    });
+});
+
+describe("providerRequiresApiKey", () => {
+    it("does not require keys for local Ollama-compatible providers", () => {
+        expect(providerRequiresApiKey("http://localhost:11434/v1")).toBe(false);
+        expect(providerRequiresApiKey("http://127.0.0.1:11434/v1")).toBe(false);
+        expect(providerRequiresApiKey("https://api.openai.com/v1")).toBe(true);
     });
 });
 

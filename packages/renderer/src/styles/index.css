@@ -2073,7 +2073,9 @@ textarea {
 .kanban-completion-ghost {
   position: absolute;
   inset: 0;
+  z-index: 2;
   display: block;
+  box-sizing: border-box;
   padding: 0.65rem 0.75rem;
   color: transparent;
   font: inherit;
@@ -2085,6 +2087,8 @@ textarea {
 
 .kanban-completion-ghost.textarea {
   padding: 12px;
+  font-size: 13px;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2479,30 +2483,43 @@ textarea {
   top: calc(100% + 6px);
   left: 0;
   z-index: 9;
-  display: flex;
-  min-width: 150px;
-  max-width: 240px;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px;
+  display: grid;
+  min-width: 124px;
+  max-width: 176px;
+  max-height: 168px;
+  overflow: auto;
+  gap: 3px;
+  padding: 4px;
   border: 1px solid var(--kanban-border);
   border-radius: 8px;
   background: var(--kanban-surface);
-  box-shadow: 0 14px 28px rgba(35, 29, 23, 0.14);
+  box-shadow: var(--kanban-menu-shadow);
 }
 
 .kanban-tag-suggestions button {
-  border: 1px solid var(--kanban-border);
-  border-radius: 999px;
-  background: var(--kanban-surface-soft);
-  color: var(--kanban-text);
-  padding: 4px 8px;
+  display: flex;
+  min-height: 30px;
+  width: 100%;
+  max-width: 100%;
+  align-items: center;
+  justify-content: flex-start;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kanban-muted);
+  padding: 0 8px;
   font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kanban-tag-suggestions button:hover {
-  border-color: var(--kanban-primary-soft-strong);
-  color: var(--kanban-primary);
+  border-color: var(--kanban-border);
+  background: var(--kanban-surface-soft);
+  color: var(--kanban-text);
 }
 
 .kanban-details footer {
