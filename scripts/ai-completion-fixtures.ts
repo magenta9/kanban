@@ -339,6 +339,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 16,
         expectedBehavior: "accept",
         blockedInsertions: ["旧接口迁移说明", "老版本", "补齐接口"],
+        idealInsertions: ["鉴权参数和错误码说明"],
         expectedNotes: "Use the current card's API documentation need instead of stale related-card wording.",
         context: context(card({ title: "接口文档", descriptionText: "补齐接口鉴权参数和错误码说明。", subtasks: ["整理鉴权参数"] }))
     },
