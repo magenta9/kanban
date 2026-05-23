@@ -1,6 +1,7 @@
 /// <reference types="node" />
 
 import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import type { AiTextSuggestionField, AiTextSuggestionInput } from "@kanban/shared";
 import { aiCompletionFixtures, type AiCompletionFixture } from "./ai-completion-fixtures";
 import {
@@ -33,6 +34,7 @@ interface CliOptions {
     limitPerField: number;
     field: "all" | AiTextSuggestionField;
     json: boolean;
+    reportPath: string;
     help: boolean;
 }
 
@@ -114,6 +116,7 @@ function parseArgs(argv: string[]): CliOptions {
         limitPerField: defaultLimitPerField,
         field: "all",
         json: false,
+        reportPath: "",
         help: false
     };
 
@@ -127,6 +130,7 @@ function parseArgs(argv: string[]): CliOptions {
         else if (arg === "--limit-per-scenario") options.limitPerField = Number(argv[++index] ?? options.limitPerField);
         else if (arg === "--field" || arg === "--scenario") options.field = parseField(argv[++index] ?? options.field);
         else if (arg === "--json") options.json = true;
+        else if (arg === "--report-path") options.reportPath = argv[++index] ?? options.reportPath;
         else if (arg === "--help" || arg === "-h") options.help = true;
     }
 
@@ -561,6 +565,7 @@ async function main(): Promise<void> {
             "  --reviewer-base-url <url>   Ollama reviewer base URL",
             "  --field <name>              description | subtask | comment | all",
             "  --limit-per-field <n>       Static fixtures per field, default 12",
+            "  --report-path <path>        Write the final JSON report to a file and print a compact summary",
             "  --json                      Include per-case results in final report"
         ].join("\n"));
         return;
@@ -610,7 +615,13 @@ async function main(): Promise<void> {
         ...(options.json ? { results } : {})
     };
 
-    console.log(JSON.stringify(report, null, 2));
+    if (options.reportPath) {
+        writeFileSync(options.reportPath, `${JSON.stringify(report, null, 2)}\n`);
+        console.log(JSON.stringify({ gitCommit: report.gitCommit, summary: report.summary }, null, 2));
+    }
+    else {
+        console.log(JSON.stringify(report, null, 2));
+    }
 }
 
 void main().catch((error) => {
