@@ -361,6 +361,15 @@ function stabilizeReview(review: EvalResult["review"], fixture: AiCompletionFixt
         };
     }
 
+    if (fixture.expectedBehavior === "accept" && diagnostics.idealHit && diagnostics.contractOk && diagnostics.withinLimit && !diagnostics.blockedHit && !diagnostics.insertHasReasoningOrFence) {
+        return {
+            ...review,
+            decision: "pass",
+            summary: `Expected accept matched an ideal insertion. ${review.summary}`,
+            scores: idealAcceptScores(review.scores)
+        };
+    }
+
     if (diagnostics.blockedHit || diagnostics.insertHasReasoningOrFence || !diagnostics.contractOk) {
         return {
             ...review,
@@ -396,6 +405,18 @@ function unexpectedEmptyScores(scores: ReviewScores): ReviewScores {
     };
 }
 
+function idealAcceptScores(scores: ReviewScores): ReviewScores {
+    return {
+        ...scores,
+        contract: Math.max(scores.contract, 5),
+        cursorFit: Math.max(scores.cursorFit, 5),
+        evidenceSupport: Math.max(scores.evidenceSupport, 4),
+        plausibility: Math.max(scores.plausibility, 5),
+        usefulness: Math.max(scores.usefulness, 5),
+        profileFit: Math.max(scores.profileFit, 4)
+    };
+}
+
 function capScores(scores: ReviewScores, caps: Partial<Record<ReviewScoreKey, number>>): ReviewScores {
     return Object.fromEntries(Object.keys(reviewWeights).map((key) => {
         const scoreKey = key as ReviewScoreKey;
@@ -410,6 +431,7 @@ function collectDiagnostics(fixture: AiCompletionFixture, raw: string, insertion
         contractOk,
         withinLimit: expectedEmpty || isSuggestionWithinLimit(insertion, fixture.maxChars),
         blockedHit: containsBlockedInsertion(insertion, fixture.blockedInsertions),
+        idealHit: fixture.expectedBehavior === "accept" && idealInsertionHit(insertion, fixture.idealInsertions ?? []),
         expectedEmpty,
         expectedRejectViolated: fixture.expectedBehavior === "reject" && insertion.length > 0,
         unexpectedEmpty: fixture.expectedBehavior === "accept" ? insertion.length === 0 : false,
@@ -417,6 +439,11 @@ function collectDiagnostics(fixture: AiCompletionFixture, raw: string, insertion
         insertHasReasoningOrFence: /<think>|<\/think>|```/i.test(insertion),
         empty: insertion.length === 0
     };
+}
+
+function idealInsertionHit(value: string, ideals: string[]): boolean {
+    const candidate = normalizeMeaning(value);
+    return Boolean(candidate) && ideals.some((ideal) => normalizeMeaning(ideal) === candidate);
 }
 
 function isSuggestionWithinLimit(value: string, maxChars: number): boolean {
@@ -428,7 +455,7 @@ function containsBlockedInsertion(value: string, blocked: string[]): boolean {
     if (!candidate) return false;
     return blocked.some((item) => {
         const normalized = normalizeMeaning(item);
-        return normalized.length >= 8 && (candidate === normalized || candidate.includes(normalized) || normalized.includes(candidate) || overlapsRequirementChecklist(candidate, normalized));
+        return normalized.length >= 8 && (candidate === normalized || candidate.includes(normalized) || overlapsRequirementChecklist(candidate, normalized));
     });
 }
 

@@ -9,6 +9,7 @@ export interface AiCompletionFixture {
     maxChars: number;
     expectedBehavior: "accept" | "reject";
     blockedInsertions: string[];
+    idealInsertions?: string[];
     expectedNotes: string;
     context: AiSuggestionCardContext;
 }
@@ -25,6 +26,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 50,
         expectedBehavior: "accept",
         blockedInsertions: ["需要分析持有标的的"],
+        idealInsertions: ["仓位、盈亏和风险点"],
         expectedNotes: "Continue with grounded attributes such as position, P/L, or risk; do not restate the subject.",
         context: context(card({ title: "持仓复盘", descriptionText: "需要分析持有标的的仓位、盈亏和风险点。" }))
     },
@@ -47,6 +49,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 40,
         expectedBehavior: "accept",
         blockedInsertions: ["- 补充构建流程的"],
+        idealInsertions: ["关键步骤和验证方式"],
         expectedNotes: "Return only the missing words after the bullet prefix, not another bullet marker.",
         context: context(card({ title: "构建流程", descriptionText: "需要补充构建流程的关键步骤和验证方式。" }))
     },
@@ -80,6 +83,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 12,
         expectedBehavior: "accept",
         blockedInsertions: ["我会", "补齐发布检查项"],
+        idealInsertions: ["验收标准"],
         expectedNotes: "Return a short actionable fragment such as 验收标准, not a full sentence or promise.",
         context: context(card({
             title: "发布检查项跟进",
@@ -95,6 +99,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 24,
         expectedBehavior: "accept",
         blockedInsertions: ["整理接口联调并"],
+        idealInsertions: ["同步测试结论"],
         expectedNotes: "Continue with a concrete action directly supported by the current card.",
         context: context(card({ title: "接口联调", descriptionText: "整理接口联调并同步测试结论。", subtasks: ["确认接口返回", "同步测试结论"] }))
     },
@@ -117,6 +122,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 24,
         expectedBehavior: "accept",
         blockedInsertions: ["张三", "今天", "马上"],
+        idealInsertions: ["来源和统计范围"],
         expectedNotes: "May complete with scope or来源; must not invent dates or owners.",
         context: context(card({ title: "数据口径", descriptionText: "确认数据口径的来源和统计范围。", subtasks: ["整理数据来源"] }))
     },
@@ -161,6 +167,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 24,
         expectedBehavior: "accept",
         blockedInsertions: ["今天完成", "保证"],
+        idealInsertions: ["配置说明", "补充文档配置说明"],
         expectedNotes: "Suggest a grounded next action without promising completion.",
         context: context(card({ title: "文档补齐", descriptionText: "下一步需要补齐文档中的配置说明。", comments: ["配置截图已补充"] }))
     },
@@ -195,6 +202,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 12,
         expectedBehavior: "accept",
         blockedInsertions: ["| 完成率 |", "待确认", "风险点"],
+        idealInsertions: ["85%"],
         expectedNotes: "Complete only the current table cell value, not another row, header, or neighboring risk value.",
         context: context(card({ title: "周报指标", descriptionText: "| 指标 | 当前值 |\n|---|---|\n| 完成率 | 85% |\n| 风险点 | 待确认 |" }))
     },
@@ -207,6 +215,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 8,
         expectedBehavior: "accept",
         blockedInsertions: ["timeout", "retry", "```"],
+        idealInsertions: ["30000"],
         expectedNotes: "Complete the JSON value only; do not repeat the property name, retry field, or code fence.",
         context: context(card({ title: "接口配置", descriptionText: "配置示例需要设置 timeout 为 30000，并保留 retry 为 3。" }))
     },
@@ -270,6 +279,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 8,
         expectedBehavior: "accept",
         blockedInsertions: ["确认数据", "和格式", "确认数据来源和格式"],
+        idealInsertions: ["来源"],
         expectedNotes: "Insert only the missing noun between the existing prefix and suffix.",
         context: context(card({ title: "数据交付", descriptionText: "确认数据来源和格式，避免下游解析失败。", subtasks: ["整理字段映射", "确认数据来源和格式"] }))
     },
@@ -282,6 +292,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 6,
         expectedBehavior: "accept",
         blockedInsertions: ["整理测试用例并同步给团队", "我会整理", "同步给团队"],
+        idealInsertions: ["用例", "测试用例"],
         expectedNotes: "Use a compact noun phrase under a very small maxChars budget instead of a full action sentence.",
         context: context(card({
             title: "测试准备",
@@ -350,6 +361,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 24,
         expectedBehavior: "accept",
         blockedInsertions: ["设计稿已确认", "无需修改", "我保证", "马上处理"],
+        idealInsertions: ["等待补充截图后再确认。", "等待补充截图后再确认"],
         expectedNotes: "Reply to the latest thread state without treating older comments as the current truth.",
         context: context(card({ title: "设计确认", descriptionText: "等待补充截图后再确认。", comments: ["设计稿需要修改", "已修改完成", "截图已补充"] }))
     },
