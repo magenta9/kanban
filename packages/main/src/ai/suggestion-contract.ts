@@ -256,6 +256,7 @@ function commentSystemPrompt(): string {
         "Use a natural teammate tone, not a task description tone.",
         "Do not auto-resolve, promise work, or mention facts not in context.",
         "Prefer short status updates, replies, action notes, or decision recaps depending on local text.",
+        "For commentBeforeCursor '风险 ', a good insert is '继续确认影响范围', not '已解决' or '无风险'.",
         "Return {\"insert\":\"\"} if the user's intent is unclear.",
         "Never include analysis, reasoning, XML tags such as <think>, or prose."
     ].join(" ");
