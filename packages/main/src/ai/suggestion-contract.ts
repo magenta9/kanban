@@ -239,6 +239,7 @@ function subtaskSystemPrompt(): string {
         "For subtaskBeforeCursor '补齐', a good insert is '验收标准'; a bad insert is '我会补齐验收标准'.",
         "For subtaskBeforeCursor '整理接口联调并', a good insert is '同步测试结论', not '整理接口联调并同步测试结论'.",
         "Prefer a short actionable fragment that matches the card's existing subtasks.",
+        "When currentCard.descriptionText contains a phrase that completes the cursor, prefer that exact short phrase over a new paraphrase.",
         "Do not invent dates, owners, promises, or completion claims that are not in context.",
         "Return {\"insert\":\"\"} if the next text is not obvious.",
         "Never include analysis, reasoning, XML tags such as <think>, or prose."
