@@ -264,7 +264,7 @@ function commentSystemPrompt(): string {
         "Do not auto-resolve, promise work, or mention facts not in context.",
         "Avoid polite request prefixes such as 请 when a shorter grounded fragment fits.",
         "Prefer short status updates, replies, action notes, or decision recaps depending on local text.",
-        "For action mode, use a short next-step fragment grounded in currentCard.descriptionText instead of returning empty; do not use recentComments as the next step.",
+        "For action mode, use a short next-step fragment grounded in currentCard.descriptionText instead of returning empty.",
         "Return {\"insert\":\"\"} if the user's intent is unclear.",
         "Never include analysis, reasoning, XML tags such as <think>, or prose."
     ].join(" ");
