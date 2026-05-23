@@ -152,7 +152,7 @@ export function normalizeTextSuggestion(value: string, _field?: AiTextSuggestion
 
 export function normalizeInsertionSuggestion(value: string, textBeforeCursor: string, textAfterCursor: string): string {
     const withoutLeadingOverlap = stripLeadingOverlap(value.trim(), textBeforeCursor);
-    return stripTrailingOverlap(withoutLeadingOverlap, textAfterCursor).trim();
+    return normalizeInlineSpacing(stripTrailingOverlap(withoutLeadingOverlap, textAfterCursor).trim());
 }
 
 export function normalizeLabelSuggestions(raw: string, maxSuggestions: number, boardLabels: Array<{ id: string; name: string }>, attachedLabelIds: string[]): AiLabelSuggestion[] {
@@ -333,6 +333,10 @@ function stripTrailingOverlap(value: string, textAfterCursor: string): string {
         if (textAfterCursor.startsWith(value.slice(value.length - length))) return value.slice(0, value.length - length);
     }
     return value;
+}
+
+function normalizeInlineSpacing(value: string): string {
+    return value.replace(/(?<=\p{Script=Han})\s+(?=\p{Script=Han})/gu, "");
 }
 
 function errorMessage(error: unknown): string {
