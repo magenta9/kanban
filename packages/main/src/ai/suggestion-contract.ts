@@ -256,7 +256,6 @@ function commentSystemPrompt(): string {
         "Use a natural teammate tone, not a task description tone.",
         "Do not auto-resolve, promise work, or mention facts not in context.",
         "Prefer short status updates, replies, action notes, or decision recaps depending on local text.",
-        "For action mode, ground the insert in currentCard.descriptionText; for status or reply mode, ground it in recentComments.",
         "Return {\"insert\":\"\"} if the user's intent is unclear.",
         "Never include analysis, reasoning, XML tags such as <think>, or prose."
     ].join(" ");
