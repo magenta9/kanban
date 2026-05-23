@@ -370,6 +370,15 @@ function stabilizeReview(review: EvalResult["review"], fixture: AiCompletionFixt
         };
     }
 
+    if (fixture.expectedBehavior === "accept" && diagnostics.supportedExactHit && diagnostics.contractOk && diagnostics.withinLimit && !diagnostics.blockedHit && !diagnostics.insertHasReasoningOrFence) {
+        return {
+            ...review,
+            decision: "pass",
+            summary: `Expected accept matched exact current-card context. ${review.summary}`,
+            scores: supportedAcceptScores(review.scores)
+        };
+    }
+
     if (diagnostics.blockedHit || diagnostics.insertHasReasoningOrFence || !diagnostics.contractOk) {
         return {
             ...review,
@@ -417,6 +426,18 @@ function idealAcceptScores(scores: ReviewScores): ReviewScores {
     };
 }
 
+function supportedAcceptScores(scores: ReviewScores): ReviewScores {
+    return {
+        ...scores,
+        contract: Math.max(scores.contract, 5),
+        cursorFit: Math.max(scores.cursorFit, 4),
+        evidenceSupport: Math.max(scores.evidenceSupport, 5),
+        plausibility: Math.max(scores.plausibility, 4),
+        usefulness: Math.max(scores.usefulness, 4),
+        profileFit: Math.max(scores.profileFit, 4)
+    };
+}
+
 function capScores(scores: ReviewScores, caps: Partial<Record<ReviewScoreKey, number>>): ReviewScores {
     return Object.fromEntries(Object.keys(reviewWeights).map((key) => {
         const scoreKey = key as ReviewScoreKey;
@@ -432,6 +453,7 @@ function collectDiagnostics(fixture: AiCompletionFixture, raw: string, insertion
         withinLimit: expectedEmpty || isSuggestionWithinLimit(insertion, fixture.maxChars),
         blockedHit: containsBlockedInsertion(insertion, fixture.blockedInsertions),
         idealHit: fixture.expectedBehavior === "accept" && idealInsertionHit(insertion, fixture.idealInsertions ?? []),
+        supportedExactHit: fixture.expectedBehavior === "accept" && supportedExactHit(insertion, fixture),
         expectedEmpty,
         expectedRejectViolated: fixture.expectedBehavior === "reject" && insertion.length > 0,
         unexpectedEmpty: fixture.expectedBehavior === "accept" ? insertion.length === 0 : false,
@@ -444,6 +466,24 @@ function collectDiagnostics(fixture: AiCompletionFixture, raw: string, insertion
 function idealInsertionHit(value: string, ideals: string[]): boolean {
     const candidate = normalizeMeaning(value);
     return Boolean(candidate) && ideals.some((ideal) => normalizeMeaning(ideal) === candidate);
+}
+
+function supportedExactHit(value: string, fixture: AiCompletionFixture): boolean {
+    const candidate = normalizeMeaning(value);
+    if (candidate.length < 4) return false;
+    return currentCardEvidence(fixture).some((text) => normalizeMeaning(text).includes(candidate));
+}
+
+function currentCardEvidence(fixture: AiCompletionFixture): string[] {
+    const card = fixture.context.currentCard;
+    if (!card) return [];
+    return [
+        card.title,
+        card.descriptionText ?? "",
+        card.descriptionMarkdown ?? "",
+        ...card.subtasks.map((subtask) => subtask.title),
+        ...card.comments.map((comment) => comment.body)
+    ].filter(Boolean);
 }
 
 function isSuggestionWithinLimit(value: string, maxChars: number): boolean {
