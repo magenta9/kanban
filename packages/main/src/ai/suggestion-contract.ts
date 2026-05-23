@@ -217,7 +217,6 @@ function descriptionSystemPrompt(): string {
         "Do not repeat textBeforeCursor, textAfterCursor, or the whole current description.",
         "Never return any text from blockedInsertions, even with small wording changes.",
         "For numbered-list mode, complete the current list item only; never duplicate or paraphrase previousListItems.",
-        "If groundedContinuationHint is present, prefer it when it fits the local Markdown cursor.",
         "For bullet mode only, return the missing words after the current bullet text; for localLine.before '- 补充构建流程的', insert '关键步骤和验证方式', not '- 补充构建流程的'.",
         "If textBeforeCursor already names the subject or object, continue with the missing attribute, action, or detail; do not restate that noun.",
         "For example, after '需要分析持有标的的', insert '仓位、盈亏和风险点', not '待分析标的...'.",
@@ -293,7 +292,6 @@ function descriptionPromptInput(input: AiTextSuggestionInput, profile: Suggestio
         textBeforeCursor: tailText(input.textBeforeCursor, 1200),
         textAfterCursor: headText(input.textAfterCursor, 600),
         localLine,
-        groundedContinuationHint: continuationHintFromText(descriptionHintPrefix(localLine.before), input.context.currentCard?.descriptionText ?? input.context.currentCard?.descriptionMarkdown ?? "", input.maxChars),
         markdownMode: markdownMode(localLine.before),
         previousListItems: previousListItems(input.textBeforeCursor),
         blockedInsertions: blockedDescriptionInsertions(input.textBeforeCursor),
@@ -371,10 +369,6 @@ function descriptionEmptyReason(input: AiTextSuggestionInput, localLine: { befor
         return "bare numbered-list item would likely duplicate previous list items";
     }
     return undefined;
-}
-
-function descriptionHintPrefix(lineBeforeCursor: string): string {
-    return listItemText(lineBeforeCursor) || lineBeforeCursor.trim();
 }
 
 function subtaskEmptyReason(input: AiTextSuggestionInput): string | undefined {
