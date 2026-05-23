@@ -771,7 +771,6 @@ function AiSettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
     const [enabled, setEnabled] = useState(false);
     const [baseUrl, setBaseUrl] = useState("");
     const [model, setModel] = useState("");
-    const [apiKey, setApiKey] = useState("");
     const [pending, setPending] = useState(false);
     const [testResult, setTestResult] = useState<AiTestConnectionResult | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -806,11 +805,9 @@ function AiSettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
             const nextSettings = await getApi().ai.saveSettings({
                 enabled,
                 baseUrl,
-                model,
-                ...(apiKey.trim() ? { apiKey } : {})
+                model
             });
             setSettings(nextSettings);
-            setApiKey("");
             return nextSettings;
         } catch (caught) {
             const message = errorMessage(caught);
@@ -862,10 +859,6 @@ function AiSettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
                     <label>
                         <span>Model</span>
                         <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="llama3.2" />
-                    </label>
-                    <label>
-                        <span>API key</span>
-                        <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" placeholder={settings?.hasApiKey ? "Saved key will be kept" : "Optional for Ollama"} />
                     </label>
                     <div className={`kanban-ai-status ${settings?.configured ? "configured" : ""}`}>
                         {settings?.configured ? "Configured" : "Not configured"}

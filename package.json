@@ -14,7 +14,7 @@
     "typecheck": "pnpm --filter @kanban/shared build && pnpm -r run typecheck",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
-    "eval:ai": "node scripts/ai-completion-eval.mjs",
+    "eval:ai": "tsup scripts/ai-completion-eval.ts --format esm --platform node --out-dir scripts/.build --clean --silent && node scripts/.build/ai-completion-eval.mjs",
     "package:mac": "pnpm run build && electron-builder --config electron-builder.yml --publish never --mac dmg"
   },
   "dependencies": {

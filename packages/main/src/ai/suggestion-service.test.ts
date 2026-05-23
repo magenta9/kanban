@@ -3,21 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AiTextSuggestionInput, KanbanCard } from "@kanban/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AiSettingsService, type SecretCodec } from "./settings-service";
+import { AiSettingsService } from "./settings-service";
 import { AiSuggestionService, isSuggestionWithinLimit, isUsableTextSuggestion, normalizeInsertionSuggestion, normalizeLabelName, normalizeLabelSuggestions, normalizeSuggestion, normalizeTextSuggestion } from "./suggestion-service";
-
-const codec: SecretCodec = {
-    isAvailable: () => true,
-    encrypt: (value) => `enc:${value}`,
-    decrypt: (value) => value.replace(/^enc:/, "")
-};
 
 let tempRoots: string[] = [];
 
 function createAiServices(): { root: string; settings: AiSettingsService; suggestions: AiSuggestionService } {
     const root = mkdtempSync(join(tmpdir(), "kanban-ai-suggestions-"));
     tempRoots.push(root);
-    const settings = new AiSettingsService({ settingsPath: join(root, "ai-settings.json"), logPath: join(root, "ai.log") }, codec);
+    const settings = new AiSettingsService({ settingsPath: join(root, "ai-settings.json"), logPath: join(root, "ai.log") });
     return { root, settings, suggestions: new AiSuggestionService(settings) };
 }
 
@@ -48,7 +42,7 @@ describe("AI text suggestion normalization", () => {
         expect(normalizeTextSuggestion('```json\n{"insert":"补充验收标准"}\n```', "description")).toBe("补充验收标准");
         expect(normalizeTextSuggestion('{"insert":"我先整理一版结论。"}', "comment")).toBe("我先整理一版结论。");
         expect(normalizeTextSuggestion('{"insert":""', "subtask")).toBe("");
-        expect(normalizeTextSuggestion("估值变化", "description")).toBe("估值变化");
+        expect(normalizeTextSuggestion("估值变化", "description")).toBe("");
     });
 
     it("accepts concise subtask insertions within the character limit", () => {
@@ -137,7 +131,11 @@ describe("AI text suggestions", () => {
             expect(body).toMatchObject({ model: "llama3.2", stream: false, think: false, options: { num_predict: 160 } });
             expect(body.messages[0].content).toContain("Markdown kanban description");
             expect(body.messages[0].content).toContain("after '需要分析持有标的的'");
-            expect(JSON.parse(body.messages[1].content)).toMatchObject({ scenario: "description", markdownMode: "paragraph" });
+            expect(JSON.parse(body.messages[1].content)).toMatchObject({
+                scenario: "description",
+                markdownMode: "paragraph",
+                suggestionProfile: { brevity: "high", directness: "high", evidenceAppetite: "medium" }
+            });
             return new Response(JSON.stringify({ message: { content: '{"insert":"估值变化"}' } }), { status: 200 });
         });
         vi.stubGlobal("fetch", fetch);
@@ -259,9 +257,10 @@ describe("AI prompt contracts", () => {
             expect(body.messages[0].content).toContain("For bullet mode only");
             expect(body.messages[0].content).toContain("previous list item already asks to clarify scope, data source, and output format");
             expect(body.messages[0].content).toContain("localLine.before is '2.'");
-            const promptPayload = JSON.parse(body.messages[1].content) as { scenario: string; markdownMode: string; previousListItems: string[]; blockedInsertions: string[]; localLine: { before: string } };
+            const promptPayload = JSON.parse(body.messages[1].content) as { scenario: string; markdownMode: string; previousListItems: string[]; blockedInsertions: string[]; localLine: { before: string }; relatedFacts?: unknown };
             expect(promptPayload).toMatchObject({
                 scenario: "description",
+                suggestionProfile: { brevity: "high", directness: "high", evidenceAppetite: "medium" },
                 markdownMode: "numbered-list",
                 localLine: { before: "2." },
                 previousListItems: ["需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式。"],
@@ -270,6 +269,7 @@ describe("AI prompt contracts", () => {
                     "需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式。"
                 ]
             });
+            expect(promptPayload.relatedFacts).toBeUndefined();
             return new Response(JSON.stringify({ message: { content: '{"insert":""}' } }), { status: 200 });
         }));
 
@@ -293,9 +293,10 @@ describe("AI prompt contracts", () => {
             expect(body.messages[0].content).toContain("short actionable fragment");
             expect(JSON.parse(body.messages[1].content)).toMatchObject({
                 scenario: "subtask",
+                suggestionProfile: { brevity: "high", directness: "high", evidenceAppetite: "medium" },
                 subtaskBeforeCursor: "补齐",
                 subtaskAfterCursor: "",
-                cardFacts: { descriptionText: "需要补齐发布检查项和验收标准" },
+                currentCard: { descriptionText: "需要补齐发布检查项和验收标准" },
                 siblingSubtasks: ["确认发布检查项", "同步测试结果"]
             });
             return new Response(JSON.stringify({ message: { content: '{"insert":"验收标准"}' } }), { status: 200 });

@@ -181,7 +181,6 @@ export interface AiSettingsState {
     configured: boolean;
     baseUrl: string;
     model: string;
-    hasApiKey: boolean;
     lastError?: AiLogEntry;
 }
 
@@ -189,8 +188,6 @@ export interface SaveAiSettingsInput {
     enabled: boolean;
     baseUrl: string;
     model: string;
-    apiKey?: string;
-    clearApiKey?: boolean;
 }
 
 export interface AiLogEntry {
