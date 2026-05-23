@@ -340,6 +340,36 @@ describe("AI prompt contracts", () => {
         })).resolves.toEqual({ suggestion: "验收标准" });
     });
 
+    it("uses an empty completion decision for duplicate subtask prefixes", async () => {
+        const { settings, suggestions } = createAiServices();
+        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
+        vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+            const body = JSON.parse(String(init.body)) as { messages: [{ role: string; content: string }, { role: string; content: string }] };
+            expect(JSON.parse(body.messages[1].content)).toMatchObject({
+                scenario: "subtask",
+                completionDecision: { returnEmpty: true, reason: "subtask prefix would duplicate a sibling subtask" }
+            });
+            return new Response(JSON.stringify({ message: { content: '{"insert":""}' } }), { status: 200 });
+        }));
+
+        await expect(suggestions.suggestText({
+            field: "subtask",
+            textBeforeCursor: "同步测试",
+            textAfterCursor: "",
+            maxChars: 12,
+            context: {
+                currentCard: testCard({
+                    subtasks: [
+                        { id: "subtask-1", title: "同步测试结果", completed: false, createdAt: 1, updatedAt: 1 },
+                        { id: "subtask-2", title: "确认回归结论", completed: false, createdAt: 1, updatedAt: 1 }
+                    ]
+                }),
+                relatedCards: [],
+                boardLabels: []
+            }
+        })).resolves.toEqual({});
+    });
+
     it("uses the comment teammate prompt contract", async () => {
         const { settings, suggestions } = createAiServices();
         settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });

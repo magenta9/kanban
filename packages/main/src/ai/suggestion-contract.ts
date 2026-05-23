@@ -387,6 +387,7 @@ function subtaskEmptyReason(input: AiTextSuggestionInput): string | undefined {
     if (/[。.!?！？]$/.test(before) && !input.textAfterCursor.trim()) return "subtask title already reads complete";
     const siblingSubtasks = input.context.currentCard?.subtasks.map((subtask) => subtask.title.trim()).filter(Boolean) ?? [];
     if (siblingSubtasks.includes(before)) return "subtask already exists in sibling subtasks";
+    if (!input.textAfterCursor.trim() && before.length >= 3 && siblingSubtasks.some((title) => title.startsWith(before))) return "subtask prefix would duplicate a sibling subtask";
     return undefined;
 }
 
