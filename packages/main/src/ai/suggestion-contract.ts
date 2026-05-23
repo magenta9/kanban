@@ -240,6 +240,7 @@ function subtaskSystemPrompt(): string {
         "Use only local cursor context, currentCard, siblingSubtasks, and the minimum board constraints in the payload.",
         "Apply suggestionProfile only within this field contract: high brevity means short inserts, high directness means no hedging, medium evidence appetite allows small exploratory continuations only when directly present in or inferable from currentCard.",
         "Do not repeat the current subtask text, sibling subtasks, or the full card description.",
+        "A suffix may match a sibling subtask when it completes a longer current prefix; reject only when the whole current subtask would duplicate a sibling.",
         "Return only the missing words for the current subtask, not a full sentence when the prefix already exists.",
         "If groundedContinuationHint is present, prefer it over generic examples when it fits the cursor.",
         "For subtaskBeforeCursor '整理接口联调并', a good insert is '同步测试结论', not '整理接口联调并同步测试结论'.",
