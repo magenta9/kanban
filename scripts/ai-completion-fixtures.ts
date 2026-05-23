@@ -3,6 +3,7 @@ import type { AiSuggestionCardContext, AiTextSuggestionField, KanbanCard } from 
 export interface AiCompletionFixture {
     id: string;
     field: AiTextSuggestionField;
+    dimensions?: string[];
     textBeforeCursor: string;
     textAfterCursor: string;
     maxChars: number;
@@ -12,7 +13,8 @@ export interface AiCompletionFixture {
     context: AiSuggestionCardContext;
 }
 
-const now = 1;
+const now = Date.UTC(2026, 4, 23);
+const dayMs = 24 * 60 * 60 * 1000;
 
 export const aiCompletionFixtures: AiCompletionFixture[] = [
     {
@@ -183,6 +185,333 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         blockedInsertions: ["已解决", "无风险", "上线完成"],
         expectedNotes: "May mention checking risk context, but must not claim resolution or completion.",
         context: context(card({ title: "风险点", descriptionText: "风险点需要继续确认影响范围。", comments: ["还缺影响范围"] }))
+    },
+    {
+        id: "description-table-cell-middle",
+        field: "description",
+        dimensions: ["markdown-table", "middle-insert", "structure-preservation"],
+        textBeforeCursor: "| 指标 | 当前值 |\n|---|---|\n| 完成率 | ",
+        textAfterCursor: " |\n| 风险点 | 待确认 |",
+        maxChars: 12,
+        expectedBehavior: "accept",
+        blockedInsertions: ["| 完成率 |", "待确认", "风险点"],
+        expectedNotes: "Complete only the current table cell value, not another row, header, or neighboring risk value.",
+        context: context(card({ title: "周报指标", descriptionText: "| 指标 | 当前值 |\n|---|---|\n| 完成率 | 85% |\n| 风险点 | 待确认 |" }))
+    },
+    {
+        id: "description-code-block-value",
+        field: "description",
+        dimensions: ["markdown-code", "middle-insert", "syntax-boundary"],
+        textBeforeCursor: "配置示例：\n```json\n{\n  \"timeout\": ",
+        textAfterCursor: ",\n  \"retry\": 3\n}\n```",
+        maxChars: 8,
+        expectedBehavior: "accept",
+        blockedInsertions: ["timeout", "retry", "```"],
+        expectedNotes: "Complete the JSON value only; do not repeat the property name, retry field, or code fence.",
+        context: context(card({ title: "接口配置", descriptionText: "配置示例需要设置 timeout 为 30000，并保留 retry 为 3。" }))
+    },
+    {
+        id: "description-long-context-target-metric",
+        field: "description",
+        dimensions: ["long-context", "maxchars-pressure", "middle-insert", "card-detail-context"],
+        textBeforeCursor: "### 背景\n\n当前系统在高并发场景下存在性能瓶颈，主要体现在数据库连接池耗尽、缓存命中率低、API响应时间超过3秒。需要从架构层面进行优化，包括引入分布式缓存、数据库读写分离、异步消息队列、热点数据预热、批量写入降噪以及慢查询治理。\n\n### 目标\n\n优化后需要达到",
+        textAfterCursor: "的性能指标。",
+        maxChars: 18,
+        expectedBehavior: "accept",
+        blockedInsertions: ["当前系统", "性能瓶颈", "分布式缓存", "数据库读写分离"],
+        expectedNotes: "Use the target metric from the card and stay within maxChars; do not summarize the long background.",
+        context: context(card({
+            title: "性能优化",
+            descriptionText: "优化后需要达到 P95<800ms 的性能指标，且错误率保持在 0.1% 以下。",
+            priority: "urgent",
+            labelIds: ["label-1", "label-2"],
+            startDate: now - dayMs,
+            dueDate: now + 2 * dayMs,
+            subtasks: [{ title: "压测数据库连接池", completed: true }, "补齐缓存命中率数据"]
+        }))
+    },
+    {
+        id: "description-stale-comment-conflict",
+        field: "description",
+        dimensions: ["conflicting-context", "stale-comment", "evidence-priority", "card-detail-context"],
+        textBeforeCursor: "最新方案：采用",
+        textAfterCursor: "",
+        maxChars: 24,
+        expectedBehavior: "accept",
+        blockedInsertions: ["Redis缓存", "之前讨论", "最新方案：采用"],
+        expectedNotes: "Prefer the current description's latest plan and ignore stale comments that mention Redis as the primary choice.",
+        context: context(card({
+            title: "缓存方案",
+            descriptionText: "最新方案：采用本地内存缓存，保留Redis作为降级选项。",
+            priority: "high",
+            labelIds: ["label-1", "label-2"],
+            dueDate: now + dayMs,
+            comments: ["之前讨论过用Redis缓存作为主方案", "新方案已经改成本地内存优先"]
+        }))
+    },
+    {
+        id: "description-saturated-list-reject",
+        field: "description",
+        dimensions: ["semantic-duplicate", "list-saturation", "reject"],
+        textBeforeCursor: "优化要点：\n1. 缩短API响应时间\n2. 提升缓存命中率\n3. 降低数据库查询延迟\n4.",
+        textAfterCursor: "",
+        maxChars: 40,
+        expectedBehavior: "reject",
+        blockedInsertions: ["缩短API响应时间", "提升缓存命中率", "降低数据库查询延迟", "优化系统性能", "改善用户体验"],
+        expectedNotes: "Return empty because another list item would likely paraphrase the already covered performance goals.",
+        context: context(card({ title: "性能优化", descriptionText: "优化要点已经覆盖响应时间、缓存命中率和数据库查询延迟。" }))
+    },
+    {
+        id: "subtask-middle-source-insert",
+        field: "subtask",
+        dimensions: ["middle-insert", "two-sided-cursor", "short-fragment"],
+        textBeforeCursor: "确认数据",
+        textAfterCursor: "和格式",
+        maxChars: 8,
+        expectedBehavior: "accept",
+        blockedInsertions: ["确认数据", "和格式", "确认数据来源和格式"],
+        expectedNotes: "Insert only the missing noun between the existing prefix and suffix.",
+        context: context(card({ title: "数据交付", descriptionText: "确认数据来源和格式，避免下游解析失败。", subtasks: ["整理字段映射", "确认数据来源和格式"] }))
+    },
+    {
+        id: "subtask-short-maxchars-long-context",
+        field: "subtask",
+        dimensions: ["long-context", "maxchars-pressure", "short-fragment", "card-detail-context"],
+        textBeforeCursor: "整理",
+        textAfterCursor: "",
+        maxChars: 6,
+        expectedBehavior: "accept",
+        blockedInsertions: ["整理测试用例并同步给团队", "我会整理", "同步给团队"],
+        expectedNotes: "Use a compact noun phrase under a very small maxChars budget instead of a full action sentence.",
+        context: context(card({
+            title: "测试准备",
+            descriptionText: "本轮测试准备需要整理测试用例并同步给团队，同时保留边界条件、异常路径和回归范围说明。",
+            priority: "medium",
+            labelIds: ["label-1"],
+            startDate: now,
+            endDate: now + 3 * dayMs,
+            subtasks: [{ title: "确认测试环境", completed: true }, "同步回归范围"]
+        }))
+    },
+    {
+        id: "subtask-bilingual-project-term",
+        field: "subtask",
+        dimensions: ["bilingual", "project-term", "language-consistency"],
+        textBeforeCursor: "Update the sprint ",
+        textAfterCursor: "",
+        maxChars: 20,
+        expectedBehavior: "accept",
+        blockedInsertions: ["Update the sprint", "迭代计划", "新需求"],
+        expectedNotes: "Complete the English project-management phrase from the mixed-language card context.",
+        context: context(card({ title: "迭代计划", descriptionText: "Update the sprint backlog with new requirements before planning starts.", subtasks: ["同步需求变更", "确认排期"] }))
+    },
+    {
+        id: "subtask-partial-sibling-reject",
+        field: "subtask",
+        dimensions: ["semantic-duplicate", "partial-sibling", "reject"],
+        textBeforeCursor: "同步测试",
+        textAfterCursor: "",
+        maxChars: 12,
+        expectedBehavior: "reject",
+        blockedInsertions: ["同步测试结果", "同步测试报告", "测试结果"],
+        expectedNotes: "Return empty because the prefix would duplicate an existing sibling subtask.",
+        context: context(card({ title: "回归同步", descriptionText: "需要同步测试结果并确认回归结论。", subtasks: ["编写测试用例", "同步测试结果", "确认回归结论"] }))
+    },
+    {
+        id: "subtask-conflicting-related-card",
+        field: "subtask",
+        dimensions: ["conflicting-context", "current-card-priority", "short-fragment"],
+        textBeforeCursor: "补齐接口",
+        textAfterCursor: "",
+        maxChars: 16,
+        expectedBehavior: "accept",
+        blockedInsertions: ["旧接口迁移说明", "老版本", "补齐接口"],
+        expectedNotes: "Use the current card's API documentation need instead of stale related-card wording.",
+        context: context(card({ title: "接口文档", descriptionText: "补齐接口鉴权参数和错误码说明。", subtasks: ["整理鉴权参数"] }))
+    },
+    {
+        id: "comment-bilingual-status-short",
+        field: "comment",
+        dimensions: ["bilingual", "maxchars-pressure", "status"],
+        textBeforeCursor: "Sync update: ",
+        textAfterCursor: "",
+        maxChars: 16,
+        expectedBehavior: "accept",
+        blockedInsertions: ["我保证", "马上完成", "already fixed all", "已经解决所有"],
+        expectedNotes: "Complete a short mixed-language status grounded in comments without promising future work.",
+        context: context(card({ title: "接口联调", descriptionText: "API 接口已对齐，还需要同步测试结论。", comments: ["API接口已对齐"] }))
+    },
+    {
+        id: "comment-reply-stale-thread",
+        field: "comment",
+        dimensions: ["stale-comment", "reply", "temporal-context"],
+        textBeforeCursor: "回复 ",
+        textAfterCursor: "",
+        maxChars: 24,
+        expectedBehavior: "accept",
+        blockedInsertions: ["设计稿已确认", "无需修改", "我保证", "马上处理"],
+        expectedNotes: "Reply to the latest thread state without treating older comments as the current truth.",
+        context: context(card({ title: "设计确认", descriptionText: "等待补充截图后再确认。", comments: ["设计稿需要修改", "已修改完成", "截图已补充"] }))
+    },
+    {
+        id: "comment-middle-multiparagraph",
+        field: "comment",
+        dimensions: ["middle-insert", "multi-paragraph", "two-sided-cursor"],
+        textBeforeCursor: "初步结论：方案可行。\n\n待确认：",
+        textAfterCursor: "\n\n下一步：同步团队。",
+        maxChars: 24,
+        expectedBehavior: "accept",
+        blockedInsertions: ["初步结论：方案可行", "下一步：同步团队", "同步团队"],
+        expectedNotes: "Fill only the pending confirmation line between two existing paragraphs.",
+        context: context(card({ title: "方案评审", descriptionText: "方案评审还需要确认数据口径和影响范围。", comments: ["数据口径需要二次确认"] }))
+    },
+    {
+        id: "comment-decision-recap-with-risk",
+        field: "comment",
+        dimensions: ["decision-recap", "unsupported-claim", "risk", "card-detail-context"],
+        textBeforeCursor: "结论 ",
+        textAfterCursor: "",
+        maxChars: 28,
+        expectedBehavior: "accept",
+        blockedInsertions: ["已上线", "风险已解除", "全部通过", "无需复核"],
+        expectedNotes: "Recap the tentative decision without inventing completion, launch, or risk resolution.",
+        context: context(card({
+            title: "风险评审",
+            descriptionText: "当前结论倾向继续推进，但风险影响范围还要复核。",
+            priority: "high",
+            labelIds: ["label-2"],
+            dueDate: now + dayMs,
+            recurrence: { seriesId: "series-1", trigger: "completion", cycle: "weekly", status: "active" },
+            comments: ["可以继续推进", "影响范围还没最终确认"]
+        }))
+    },
+    {
+        id: "comment-ambiguous-multiline-reject",
+        field: "comment",
+        dimensions: ["ambiguous-intent", "multi-paragraph", "reject"],
+        textBeforeCursor: "备注：\n嗯",
+        textAfterCursor: "",
+        maxChars: 24,
+        expectedBehavior: "reject",
+        blockedInsertions: ["收到", "马上处理", "我来跟进"],
+        expectedNotes: "Return empty because the local comment intent remains ambiguous even with surrounding context.",
+        context: context(card({ title: "结论同步", descriptionText: "需要同步结论。", comments: ["结论还需要复核", "等产品确认"] }))
+    },
+    {
+        id: "description-detail-risk-before-due-date",
+        field: "description",
+        dimensions: ["card-detail-context", "due-date", "labels", "completed-subtasks"],
+        textBeforeCursor: "上线前需要确认",
+        textAfterCursor: "",
+        maxChars: 24,
+        expectedBehavior: "accept",
+        blockedInsertions: ["联调已完成", "明天上线", "上线前需要确认"],
+        expectedNotes: "Use risk/priority/detail context to complete a pre-launch check, but do not claim launch or repeat completed subtasks.",
+        context: context(card({
+            title: "支付链路上线",
+            descriptionText: "上线前需要确认回滚方案和风控开关。",
+            priority: "urgent",
+            labelIds: ["label-2"],
+            dueDate: now + dayMs,
+            subtasks: [{ title: "联调已完成", completed: true }, "确认回滚方案"],
+            comments: ["风控开关还需要二次确认"]
+        }))
+    },
+    {
+        id: "description-detail-recurrence-blocked-reject",
+        field: "description",
+        dimensions: ["card-detail-context", "recurrence", "reject", "blocked-state"],
+        textBeforeCursor: "本次巡检已暂停。",
+        textAfterCursor: "",
+        maxChars: 24,
+        expectedBehavior: "reject",
+        blockedInsertions: ["继续生成下次巡检", "恢复巡检", "每天执行"],
+        expectedNotes: "Return empty because the sentence is complete and the recurrence is blocked; do not suggest resuming the series.",
+        context: context(card({
+            title: "每日巡检",
+            descriptionText: "本次巡检已暂停。复发规则因为权限缺失被阻塞。",
+            priority: "medium",
+            labelIds: ["label-2"],
+            recurrence: { seriesId: "series-blocked", trigger: "fixed", cycle: "daily", status: "blocked", blockedReason: "缺少巡检权限" },
+            comments: ["等权限恢复后再处理"]
+        }))
+    },
+    {
+        id: "subtask-detail-skip-completed",
+        field: "subtask",
+        dimensions: ["card-detail-context", "completed-subtasks", "short-fragment"],
+        textBeforeCursor: "确认",
+        textAfterCursor: "",
+        maxChars: 12,
+        expectedBehavior: "accept",
+        blockedInsertions: ["联调结果", "确认联调结果", "已完成"],
+        expectedNotes: "Complete with the remaining risk check, not the already completed integration result.",
+        context: context(card({
+            title: "支付链路上线",
+            descriptionText: "联调结果已经确认，剩余风险开关需要确认。",
+            priority: "urgent",
+            labelIds: ["label-2"],
+            dueDate: now + dayMs,
+            subtasks: [{ title: "确认联调结果", completed: true }, "同步上线窗口"]
+        }))
+    },
+    {
+        id: "subtask-detail-recurrence-weekly",
+        field: "subtask",
+        dimensions: ["card-detail-context", "recurrence", "project-term"],
+        textBeforeCursor: "整理本周",
+        textAfterCursor: "",
+        maxChars: 14,
+        expectedBehavior: "accept",
+        blockedInsertions: ["每日巡检", "下周", "整理本周"],
+        expectedNotes: "Use the active weekly recurrence and current card description to complete the weekly summary task.",
+        context: context(card({
+            title: "周报复盘",
+            descriptionText: "整理本周风险项和处理结论，作为周会材料。",
+            priority: "medium",
+            labelIds: ["label-2", "label-3"],
+            recurrence: { seriesId: "series-weekly", trigger: "fixed", cycle: "weekly", status: "active" },
+            subtasks: ["汇总风险项", "同步处理结论"]
+        }))
+    },
+    {
+        id: "comment-detail-due-today-status",
+        field: "comment",
+        dimensions: ["card-detail-context", "due-date", "status", "completed-subtasks"],
+        textBeforeCursor: "今天 ",
+        textAfterCursor: "",
+        maxChars: 24,
+        expectedBehavior: "accept",
+        blockedInsertions: ["全部完成", "保证上线", "无需复核"],
+        expectedNotes: "Use today's due date and completed subtasks for a grounded status without overclaiming completion.",
+        context: context(card({
+            title: "支付链路上线",
+            descriptionText: "今天需要完成上线前风险复核。",
+            priority: "urgent",
+            labelIds: ["label-2"],
+            dueDate: now,
+            subtasks: [{ title: "联调已完成", completed: true }, "风险复核"],
+            comments: ["联调已经通过", "风险复核还在进行"]
+        }))
+    },
+    {
+        id: "comment-detail-recurrence-blocked-reply",
+        field: "comment",
+        dimensions: ["card-detail-context", "recurrence", "reply", "blocked-state"],
+        textBeforeCursor: "回复 ",
+        textAfterCursor: "",
+        maxChars: 24,
+        expectedBehavior: "accept",
+        blockedInsertions: ["已经恢复", "继续自动生成", "无需处理"],
+        expectedNotes: "Reply using the blocked recurrence state without claiming the recurring workflow has resumed.",
+        context: context(card({
+            title: "每日巡检",
+            descriptionText: "复发任务因权限缺失暂时阻塞。",
+            priority: "high",
+            labelIds: ["label-2"],
+            recurrence: { seriesId: "series-blocked", trigger: "fixed", cycle: "daily", status: "blocked", blockedReason: "缺少巡检权限" },
+            comments: ["今天的巡检没有自动生成", "需要先恢复权限"]
+        }))
     }
 ];
 
@@ -199,11 +528,11 @@ function context(currentCard: KanbanCard): AiSuggestionCardContext {
     };
 }
 
-function card(patch: Partial<KanbanCard> & { subtasks?: string[]; comments?: string[] } = {}): KanbanCard {
-    const subtasks = (patch.subtasks ?? []).map((title, index) => ({
+function card(patch: Partial<Omit<KanbanCard, "subtasks" | "comments">> & { subtasks?: Array<string | { title: string; completed?: boolean }>; comments?: string[] } = {}): KanbanCard {
+    const subtasks = (patch.subtasks ?? []).map((subtask, index) => ({
         id: `subtask-${index + 1}`,
-        title,
-        completed: false,
+        title: typeof subtask === "string" ? subtask : subtask.title,
+        completed: typeof subtask === "string" ? false : subtask.completed ?? false,
         createdAt: now,
         updatedAt: now
     }));

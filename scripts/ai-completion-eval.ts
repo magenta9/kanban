@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { execFileSync } from "node:child_process";
 import type { AiTextSuggestionField, AiTextSuggestionInput } from "@kanban/shared";
 import { aiCompletionFixtures, type AiCompletionFixture } from "./ai-completion-fixtures";
@@ -18,7 +20,7 @@ import { normalizeInsertionSuggestion, normalizeTextSuggestion } from "../packag
 
 const defaultModel = "qwen3.5:2b-mlx";
 const defaultBaseUrl = "http://localhost:11434";
-const defaultLimitPerField = 5;
+const defaultLimitPerField = 12;
 const passScore = 80;
 
 type EvalVariant = "baseline" | "current";
@@ -39,6 +41,7 @@ interface ReviewScores extends Record<ReviewScoreKey, number> { }
 interface EvalResult {
     id: string;
     field: AiTextSuggestionField;
+    dimensions: string[];
     variant: EvalVariant;
     expectedBehavior: "accept" | "reject";
     score: number;
@@ -156,6 +159,7 @@ async function evaluateFixture(options: CliOptions, fixture: AiCompletionFixture
     return {
         id: fixture.id,
         field: fixture.field,
+        dimensions: fixture.dimensions ?? [],
         variant,
         expectedBehavior: fixture.expectedBehavior,
         score,
@@ -488,7 +492,17 @@ function summarize(results: EvalResult[]): object {
     const fields: Array<"all" | AiTextSuggestionField> = ["all", "description", "subtask", "comment"];
     const byField = Object.fromEntries(fields.map((field) => [field, summarizeByVariant(field === "all" ? results : results.filter((result) => result.field === field))]));
     const deltaByField = Object.fromEntries(["description", "subtask", "comment"].map((field) => [field, delta(byField[field] as Record<EvalVariant, SummaryGroup>)]));
-    return { byField, deltaByField };
+    const dimensions = uniqueStrings(results.flatMap((result) => result.dimensions));
+    const byDimension = Object.fromEntries(dimensions.map((dimension) => [
+        dimension,
+        summarizeByVariant(results.filter((result) => result.dimensions.includes(dimension)))
+    ]));
+    const deltaByDimension = Object.fromEntries(dimensions.map((dimension) => [dimension, delta(byDimension[dimension] as Record<EvalVariant, SummaryGroup>)]));
+    return { byField, deltaByField, byDimension, deltaByDimension };
+}
+
+function uniqueStrings(values: string[]): string[] {
+    return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 interface SummaryGroup {
@@ -546,7 +560,7 @@ async function main(): Promise<void> {
             "  --reviewer-model <name>     Ollama model for reviewer scoring",
             "  --reviewer-base-url <url>   Ollama reviewer base URL",
             "  --field <name>              description | subtask | comment | all",
-            "  --limit-per-field <n>       Static fixtures per field, default 5",
+            "  --limit-per-field <n>       Static fixtures per field, default 12",
             "  --json                      Include per-case results in final report"
         ].join("\n"));
         return;
@@ -572,6 +586,7 @@ async function main(): Promise<void> {
         .map((result) => ({
             id: result.id,
             field: result.field,
+            dimensions: result.dimensions,
             variant: result.variant,
             expectedBehavior: result.expectedBehavior,
             score: result.score,

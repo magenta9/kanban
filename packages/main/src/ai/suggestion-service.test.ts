@@ -287,7 +287,7 @@ describe("AI prompt contracts", () => {
         settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
         vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
             const body = JSON.parse(String(init.body)) as { messages: [{ role: string; content: string }, { role: string; content: string }] };
-            expect(body.messages[0].content).toContain('{"insert":"..."}');
+            expect(body.messages[0].content).toContain("Return JSON with one insert string");
             expect(body.messages[0].content).toContain("subtask title");
             expect(body.messages[0].content).toContain("For subtaskBeforeCursor '补齐'");
             expect(body.messages[0].content).toContain("short actionable fragment");
@@ -296,8 +296,22 @@ describe("AI prompt contracts", () => {
                 suggestionProfile: { brevity: "high", directness: "high", evidenceAppetite: "medium" },
                 subtaskBeforeCursor: "补齐",
                 subtaskAfterCursor: "",
-                currentCard: { descriptionText: "需要补齐发布检查项和验收标准" },
+                currentCard: {
+                    descriptionText: "需要补齐发布检查项和验收标准",
+                    priority: "high",
+                    labels: ["Dev"],
+                    dates: { startDate: "2026-05-23", dueDate: "2026-05-25" },
+                    recurrence: { trigger: "completion", cycle: "weekly", status: "active" }
+                },
                 siblingSubtasks: ["确认发布检查项", "同步测试结果"]
+            });
+            expect(JSON.parse(body.messages[1].content)).toMatchObject({
+                currentCard: {
+                    subtasks: [
+                        { title: "确认发布检查项", completed: false },
+                        { title: "同步测试结果", completed: false }
+                    ]
+                }
             });
             return new Response(JSON.stringify({ message: { content: '{"insert":"验收标准"}' } }), { status: 200 });
         }));
@@ -310,13 +324,18 @@ describe("AI prompt contracts", () => {
             context: {
                 currentCard: testCard({
                     descriptionText: "需要补齐发布检查项和验收标准",
+                    priority: "high",
+                    labelIds: ["label-1"],
+                    startDate: Date.UTC(2026, 4, 23),
+                    dueDate: Date.UTC(2026, 4, 25),
+                    recurrence: { seriesId: "series-1", trigger: "completion", cycle: "weekly", status: "active" },
                     subtasks: [
                         { id: "subtask-1", title: "确认发布检查项", completed: false, createdAt: 1, updatedAt: 1 },
                         { id: "subtask-2", title: "同步测试结果", completed: false, createdAt: 1, updatedAt: 1 }
                     ]
                 }),
                 relatedCards: [],
-                boardLabels: []
+                boardLabels: [{ id: "label-1", boardId: "board-1", name: "Dev", color: "#64748b" }]
             }
         })).resolves.toEqual({ suggestion: "验收标准" });
     });
