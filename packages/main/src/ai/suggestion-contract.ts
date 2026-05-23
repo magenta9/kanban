@@ -299,13 +299,15 @@ function subtaskPromptInput(input: AiTextSuggestionInput, profile: SuggestionPro
 
 function commentPromptInput(input: AiTextSuggestionInput, profile: SuggestionProfile): object {
     const localLine = localCursorLine(input.textBeforeCursor, input.textAfterCursor);
+    const mode = commentMode(input.textBeforeCursor);
     return {
         scenario: "comment",
         suggestionProfile: profile,
         commentBeforeCursor: tailText(input.textBeforeCursor, 800),
         commentAfterCursor: headText(input.textAfterCursor, 400),
         localLine,
-        commentMode: commentMode(input.textBeforeCursor),
+        commentMode: mode,
+        modeGuidance: commentModeGuidance(mode),
         maxChars: input.maxChars,
         currentCard: compactCurrentCard(input.context),
         recentComments: recentComments(input.context),
@@ -382,6 +384,13 @@ function commentMode(textBeforeCursor: string): "reply" | "status" | "action" | 
     if (/^(todo|action|next)\b/.test(trimmed) || trimmed.startsWith("下一步") || trimmed.startsWith("待办")) return "action";
     if (/^(status|update)\b/.test(trimmed) || trimmed.startsWith("进展") || trimmed.startsWith("状态")) return "status";
     return "note";
+}
+
+function commentModeGuidance(mode: ReturnType<typeof commentMode>): string {
+    if (mode === "action") return "Suggest the next small grounded action from currentCard; do not claim that the action is already done.";
+    if (mode === "status") return "Continue as a brief status update grounded in recentComments or currentCard; do not introduce a new action.";
+    if (mode === "reply") return "Continue as a brief reply to recentComments; do not resolve the task or invent agreement.";
+    return "Use a short note only when the local text clearly points to one grounded continuation.";
 }
 
 function recentComments(context: AiTextSuggestionInput["context"]): string[] {
