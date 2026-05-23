@@ -277,7 +277,7 @@ async function reviewCompletion(
         reviewOutputSchema
     );
 
-    return parseReview(reviewRaw);
+    return stabilizeReview(parseReview(reviewRaw), fixture, diagnostics);
 }
 
 async function chat(baseUrl: string, model: string, messages: Array<{ role: string; content: string }>, numPredict: number, temperature: number, label: string, format: object): Promise<string> {
@@ -326,12 +326,85 @@ function parseReview(raw: string): EvalResult["review"] {
     }
 }
 
+function stabilizeReview(review: EvalResult["review"], fixture: AiCompletionFixture, diagnostics: Record<string, boolean>): EvalResult["review"] {
+    if (fixture.expectedBehavior === "reject" && diagnostics.expectedEmpty) {
+        return {
+            ...review,
+            decision: "pass",
+            summary: `Expected reject returned an empty insert. ${review.summary}`,
+            scores: perfectScores()
+        };
+    }
+
+    if (fixture.expectedBehavior === "reject" && diagnostics.expectedRejectViolated) {
+        return {
+            ...review,
+            decision: "fail",
+            summary: `Expected reject returned a non-empty insert. ${review.summary}`,
+            scores: rejectViolationScores()
+        };
+    }
+
+    if (diagnostics.unexpectedEmpty) {
+        return {
+            ...review,
+            decision: "fail",
+            summary: `Expected accept returned an empty insert. ${review.summary}`,
+            scores: unexpectedEmptyScores(review.scores)
+        };
+    }
+
+    if (diagnostics.blockedHit || diagnostics.hasReasoningOrFence || !diagnostics.contractOk) {
+        return {
+            ...review,
+            decision: "fail",
+            scores: capScores(review.scores, { contract: 2 })
+        };
+    }
+
+    return review;
+}
+
+function perfectScores(): ReviewScores {
+    return Object.fromEntries(Object.keys(reviewWeights).map((key) => [key, 5])) as ReviewScores;
+}
+
+function rejectViolationScores(): ReviewScores {
+    return {
+        contract: 1,
+        cursorFit: 1,
+        evidenceSupport: 1,
+        plausibility: 2,
+        usefulness: 1,
+        profileFit: 2
+    };
+}
+
+function unexpectedEmptyScores(scores: ReviewScores): ReviewScores {
+    return {
+        ...scores,
+        contract: Math.min(scores.contract, 3),
+        cursorFit: 1,
+        usefulness: 1
+    };
+}
+
+function capScores(scores: ReviewScores, caps: Partial<Record<ReviewScoreKey, number>>): ReviewScores {
+    return Object.fromEntries(Object.keys(reviewWeights).map((key) => {
+        const scoreKey = key as ReviewScoreKey;
+        const cap = caps[scoreKey];
+        return [scoreKey, typeof cap === "number" ? Math.min(scores[scoreKey], cap) : scores[scoreKey]];
+    })) as ReviewScores;
+}
+
 function collectDiagnostics(fixture: AiCompletionFixture, raw: string, insertion: string, contractOk: boolean): Record<string, boolean> {
+    const expectedEmpty = fixture.expectedBehavior === "reject" && insertion.length === 0;
     return {
         contractOk,
-        withinLimit: isSuggestionWithinLimit(insertion, fixture.maxChars),
+        withinLimit: expectedEmpty || isSuggestionWithinLimit(insertion, fixture.maxChars),
         blockedHit: containsBlockedInsertion(insertion, fixture.blockedInsertions),
-        expectedEmpty: fixture.expectedBehavior === "reject" ? insertion.length === 0 : false,
+        expectedEmpty,
+        expectedRejectViolated: fixture.expectedBehavior === "reject" && insertion.length > 0,
         unexpectedEmpty: fixture.expectedBehavior === "accept" ? insertion.length === 0 : false,
         hasReasoningOrFence: /<think>|<\/think>|```/i.test(raw),
         empty: insertion.length === 0
