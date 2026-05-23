@@ -330,6 +330,7 @@ function subtaskPromptInput(input: AiTextSuggestionInput, profile: SuggestionPro
 function commentPromptInput(input: AiTextSuggestionInput, profile: SuggestionProfile): object {
     const localLine = localCursorLine(input.textBeforeCursor, input.textAfterCursor);
     const emptyReason = commentEmptyReason(input);
+    const mode = commentMode(input.textBeforeCursor);
     if (emptyReason) {
         return {
             scenario: "comment",
@@ -345,16 +346,21 @@ function commentPromptInput(input: AiTextSuggestionInput, profile: SuggestionPro
         commentBeforeCursor: tailText(input.textBeforeCursor, 800),
         commentAfterCursor: headText(input.textAfterCursor, 400),
         localLine,
-        commentMode: commentMode(input.textBeforeCursor),
+        commentMode: mode,
         maxChars: input.maxChars,
-        currentCard: compactCurrentCard(input.context),
-        recentComments: recentComments(input.context),
+        currentCard: compactCommentCurrentCard(input.context, mode),
+        recentComments: mode === "action" ? [] : recentComments(input.context),
         board: compactBoard(input.context)
     };
 }
 
 function compactCurrentCard(context: AiTextSuggestionInput["context"]): object | undefined {
     return context.currentCard ? compactCard(context.currentCard, context) : undefined;
+}
+
+function compactCommentCurrentCard(context: AiTextSuggestionInput["context"], mode: "reply" | "status" | "action" | "note"): object | undefined {
+    const card = compactCurrentCard(context) as (Record<string, unknown> | undefined);
+    return card && mode === "action" ? { ...card, comments: [] } : card;
 }
 
 function completionDecision(reason: string | undefined): object {
