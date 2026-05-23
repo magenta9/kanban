@@ -233,7 +233,6 @@ function subtaskSystemPrompt(): string {
         "Return only JSON: {\"insert\":\"...\"}.",
         "The insert must fit exactly between subtaskBeforeCursor and subtaskAfterCursor.",
         "Use only local cursor context, currentCard, siblingSubtasks, and the minimum board constraints in the payload.",
-        "Apply suggestionProfile only within this field contract: high brevity means short inserts, high directness means no hedging, medium evidence appetite allows small exploratory continuations only when directly present in or inferable from currentCard.",
         "Do not repeat the current subtask text, sibling subtasks, or the full card description.",
         "Return only the missing words for the current subtask, not a full sentence when the prefix already exists.",
         "For subtaskBeforeCursor '补齐', a good insert is '验收标准'; a bad insert is '我会补齐验收标准'.",
