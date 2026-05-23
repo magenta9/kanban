@@ -209,6 +209,7 @@ function descriptionSystemPrompt(): string {
         "The insert must fit exactly between textBeforeCursor and textAfterCursor.",
         "Use only local cursor context, currentCard, and the minimum board constraints in the payload.",
         "Apply suggestionProfile only within this field contract: high brevity means short inserts, high directness means no hedging, medium evidence appetite allows small exploratory continuations only when directly present in or inferable from currentCard.",
+        "First decide whether to insert anything: return {\"insert\":\"\"} for heading-only lines, complete sentences ending in terminal punctuation, duplicate numbered-list requirements, or any continuation that would repeat currentCard.descriptionText.",
         "Preserve local Markdown mode: paragraph, bullet, numbered list, heading, or empty line.",
         "Do not repeat textBeforeCursor, textAfterCursor, or the whole current description.",
         "Never return any text from blockedInsertions, even with small wording changes.",
