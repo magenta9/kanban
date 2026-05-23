@@ -214,7 +214,7 @@ function descriptionSystemPrompt(): string {
         "Respect maxChars as a hard limit; if the grounded continuation is longer, return the shortest useful fragment or leave insert empty.",
         "Use only local cursor context, currentCard, and the minimum board constraints in the payload.",
         "Apply suggestionProfile only within this field contract: high brevity means short inserts, high directness means no hedging, medium evidence appetite allows small exploratory continuations only when directly present in or inferable from currentCard.",
-        "Preserve local Markdown mode: paragraph, bullet, numbered list, heading, or empty line.",
+        "Preserve local Markdown mode: paragraph, bullet, numbered list, heading, table, code fence, or empty line.",
         "Do not repeat textBeforeCursor, textAfterCursor, or the whole current description.",
         "Never return any text from blockedInsertions, even with small wording changes.",
         "For numbered-list mode, complete the current list item only; never duplicate or paraphrase previousListItems.",
@@ -297,7 +297,7 @@ function descriptionPromptInput(input: AiTextSuggestionInput, profile: Suggestio
         textBeforeCursor: tailText(input.textBeforeCursor, 1200),
         textAfterCursor: headText(input.textAfterCursor, 600),
         localLine,
-        markdownMode: markdownMode(localLine.before),
+        markdownMode: markdownMode(localLine.before, input.textBeforeCursor),
         groundedContinuationHint: continuationHintFromText(input.textBeforeCursor, input.context.currentCard?.descriptionText ?? input.context.currentCard?.descriptionMarkdown ?? "", input.maxChars),
         previousListItems: previousListItems(input.textBeforeCursor),
         blockedInsertions: blockedDescriptionInsertions(input.textBeforeCursor),
@@ -471,12 +471,14 @@ function labelCandidates(input: AiLabelSuggestionInput): string[] {
     return uniqueStrings([...prefixMatches, ...fuzzyMatches, ...names]).slice(0, 50);
 }
 
-function markdownMode(lineBeforeCursor: string): "empty-line" | "heading" | "bullet" | "numbered-list" | "paragraph" {
+function markdownMode(lineBeforeCursor: string, textBeforeCursor = ""): "empty-line" | "heading" | "bullet" | "numbered-list" | "table" | "code" | "paragraph" {
     const trimmed = lineBeforeCursor.trimStart();
+    if ((textBeforeCursor.match(/```/g)?.length ?? 0) % 2 === 1) return "code";
     if (!trimmed) return "empty-line";
     if (/^#{1,6}\s/.test(trimmed)) return "heading";
     if (/^[-*+]\s/.test(trimmed)) return "bullet";
     if (/^\d+[.)](?:\s|$)/.test(trimmed)) return "numbered-list";
+    if (trimmed.includes("|")) return "table";
     return "paragraph";
 }
 
