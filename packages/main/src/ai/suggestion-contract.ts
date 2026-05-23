@@ -264,7 +264,6 @@ function commentSystemPrompt(): string {
         "Do not auto-resolve, promise work, or mention facts not in context.",
         "Avoid polite request prefixes such as 请 when a shorter grounded fragment fits.",
         "Prefer short status updates, replies, action notes, or decision recaps depending on local text.",
-        "For action mode, if groundedActionHint is present, use its shortest useful action fragment and remove leading words such as 需要 or 要.",
         "For action mode, use a short next-step fragment grounded in currentCard.descriptionText instead of returning empty.",
         "Return {\"insert\":\"\"} if the user's intent is unclear.",
         "Never include analysis, reasoning, XML tags such as <think>, or prose."
@@ -347,7 +346,6 @@ function commentPromptInput(input: AiTextSuggestionInput, profile: SuggestionPro
         commentAfterCursor: headText(input.textAfterCursor, 400),
         localLine,
         commentMode: commentMode(input.textBeforeCursor),
-        groundedActionHint: commentActionHint(input),
         maxChars: input.maxChars,
         currentCard: compactCurrentCard(input.context),
         recentComments: recentComments(input.context),
@@ -385,12 +383,6 @@ function commentEmptyReason(input: AiTextSuggestionInput): string | undefined {
     const before = input.textBeforeCursor.trim();
     if (before.length <= 1 && !input.textAfterCursor.trim()) return "comment intent is too ambiguous for a grounded completion";
     return undefined;
-}
-
-function commentActionHint(input: AiTextSuggestionInput): string {
-    if (commentMode(input.textBeforeCursor) !== "action") return "";
-    const source = input.context.currentCard?.descriptionText ?? input.context.currentCard?.descriptionMarkdown ?? "";
-    return continuationHintFromText(input.textBeforeCursor, source, input.maxChars).replace(/^(?:需要|要)\s*/, "");
 }
 
 function continuationHintFromText(prefix: string, source: string, maxChars: number): string {
