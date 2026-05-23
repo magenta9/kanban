@@ -237,7 +237,7 @@ function subtaskSystemPrompt(): string {
         "Do not repeat the current subtask text, sibling subtasks, or the full card description.",
         "Return only the missing words for the current subtask, not a full sentence when the prefix already exists.",
         "For subtaskBeforeCursor '补齐', a good insert is '验收标准'; a bad insert is '我会补齐验收标准'.",
-        "For subtaskBeforeCursor '整理接口联调并', a good insert is '同步测试结论', not '整理接口联调并同步测试结论'.",
+        "For subtaskBeforeCursor '整理接口联调并', insert exactly '同步测试结论', not '整理接口联调并同步测试结论' or '同步测试结论。'.",
         "Prefer a short actionable fragment that matches the card's existing subtasks.",
         "Do not invent dates, owners, promises, or completion claims that are not in context.",
         "Return {\"insert\":\"\"} if the next text is not obvious.",
@@ -256,6 +256,7 @@ function commentSystemPrompt(): string {
         "Use a natural teammate tone, not a task description tone.",
         "Do not auto-resolve, promise work, or mention facts not in context.",
         "Prefer short status updates, replies, action notes, or decision recaps depending on local text.",
+        "For commentBeforeCursor '风险 ', a good insert is '继续确认影响范围', not '已解决' or '无风险'.",
         "Return {\"insert\":\"\"} if the user's intent is unclear.",
         "Never include analysis, reasoning, XML tags such as <think>, or prose."
     ].join(" ");
