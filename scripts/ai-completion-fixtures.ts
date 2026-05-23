@@ -228,6 +228,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 18,
         expectedBehavior: "accept",
         blockedInsertions: ["当前系统", "性能瓶颈", "分布式缓存", "数据库读写分离"],
+        idealInsertions: ["P95<800ms"],
         expectedNotes: "Use the target metric from the card and stay within maxChars; do not summarize the long background.",
         context: context(card({
             title: "性能优化",
@@ -248,6 +249,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 24,
         expectedBehavior: "accept",
         blockedInsertions: ["Redis缓存", "之前讨论", "最新方案：采用"],
+        idealInsertions: ["本地内存缓存，保留Redis作为降级选项。", "本地内存缓存，保留 Redis 作为降级选项。"],
         expectedNotes: "Prefer the current description's latest plan and ignore stale comments that mention Redis as the primary choice.",
         context: context(card({
             title: "缓存方案",
@@ -418,6 +420,7 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         maxChars: 24,
         expectedBehavior: "accept",
         blockedInsertions: ["联调已完成", "明天上线", "上线前需要确认"],
+        idealInsertions: ["回滚方案和风控开关"],
         expectedNotes: "Use risk/priority/detail context to complete a pre-launch check, but do not claim launch or repeat completed subtasks.",
         context: context(card({
             title: "支付链路上线",
