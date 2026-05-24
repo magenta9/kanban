@@ -1922,7 +1922,7 @@ textarea {
   border: 1px solid var(--kanban-border);
   border-radius: 8px;
   background: var(--kanban-surface);
-  padding: 7px 8px;
+  padding: 5px 8px;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
 }
 
@@ -1944,7 +1944,7 @@ textarea {
 }
 
 .kanban-subtask-row input:not([type]) {
-  height: 30px;
+  height: 28px;
   border-color: transparent;
   background: transparent;
 }
@@ -1961,6 +1961,13 @@ textarea {
 
 .kanban-inline-add input {
   height: 32px;
+}
+
+.kanban-subtask-add input {
+  height: 38px;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 13px;
 }
 
 .kanban-inline-add button,

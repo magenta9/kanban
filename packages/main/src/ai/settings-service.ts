@@ -1,7 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AiLogEntry, AiSettingsState, AiTestConnectionResult, SaveAiSettingsInput } from "@kanban/shared";
-import { textSuggestionOutputSchema } from "./suggestion-contract";
 
 interface StoredAiSettings {
     enabled: boolean;
@@ -20,6 +19,15 @@ const defaultSettings: StoredAiSettings = {
     baseUrl: "",
     model: ""
 };
+
+const connectionTestOutputSchema = {
+    type: "object",
+    properties: {
+        status: { type: "string" }
+    },
+    required: ["status"],
+    additionalProperties: false
+} as const;
 
 export class AiSettingsService {
     constructor(private readonly paths: AiSettingsPaths) { }
@@ -52,33 +60,42 @@ export class AiSettingsService {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15_000);
         const messages = [
-            { role: "system", content: "Return JSON only: {\"insert\":\"ok\"}." },
+            { role: "system", content: "Return JSON only: {\"status\":\"ok\"}. Use the key status exactly." },
             { role: "user", content: "Test structured output capability." }
         ];
         try {
-            const response = await fetch(ollamaChatUrl(settings.baseUrl), {
-                method: "POST",
-                signal: controller.signal,
-                headers: chatCompletionHeaders(),
-                body: JSON.stringify(ollamaChatBody({ model: settings.model, messages, maxTokens: 12, format: textSuggestionOutputSchema }))
-            });
+            let lastContent: unknown = "";
+            let lastStatusCode: number | undefined;
+
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                const response = await fetch(ollamaChatUrl(settings.baseUrl), {
+                    method: "POST",
+                    signal: controller.signal,
+                    headers: chatCompletionHeaders(),
+                    body: JSON.stringify(ollamaChatBody({ model: settings.model, messages, maxTokens: 12, format: connectionTestOutputSchema }))
+                });
+                const durationMs = Date.now() - startedAt;
+                if (!response.ok) {
+                    const detail = await responseErrorDetail(response);
+                    const message = `AI test failed with HTTP ${response.status}.${detail ? ` ${detail}` : ""}`;
+                    this.recordError({ scope: "testConnection", scenario: "ai-settings.connection-test", event: "http_error", message, statusCode: response.status, durationMs });
+                    return { ok: false, message, statusCode: response.status, durationMs };
+                }
+
+                lastStatusCode = response.status;
+                const json = await response.json() as { message?: { content?: unknown } };
+                lastContent = json.message?.content;
+                if (parseStructuredConnectionProbe(lastContent)) {
+                    this.recordEvent({ level: "info", scope: "testConnection", scenario: "ai-settings.connection-test", event: "success", message: "AI structured output test completed.", statusCode: response.status, durationMs });
+                    return { ok: true, message: "AI structured output succeeded.", statusCode: response.status, durationMs };
+                }
+            }
+
             const durationMs = Date.now() - startedAt;
-            if (!response.ok) {
-                const detail = await responseErrorDetail(response);
-                const message = `AI test failed with HTTP ${response.status}.${detail ? ` ${detail}` : ""}`;
-                this.recordError({ scope: "testConnection", scenario: "ai-settings.connection-test", event: "http_error", message, statusCode: response.status, durationMs });
-                return { ok: false, message, statusCode: response.status, durationMs };
-            }
-            const json = await response.json() as { message?: { content?: unknown } };
-            const content = typeof json.message?.content === "string" ? json.message.content : "";
-            const structured = parseStructuredInsert(content);
-            if (!structured) {
-                const message = "AI test failed: structured output did not match schema.";
-                this.recordError({ scope: "testConnection", scenario: "ai-settings.connection-test", event: "schema_failed", message, statusCode: response.status, durationMs });
-                return { ok: false, message, statusCode: response.status, durationMs };
-            }
-            this.recordEvent({ level: "info", scope: "testConnection", scenario: "ai-settings.connection-test", event: "success", message: "AI structured output test completed.", statusCode: response.status, durationMs });
-            return { ok: true, message: "AI structured output succeeded.", statusCode: response.status, durationMs };
+            const preview = previewStructuredContent(lastContent);
+            const message = `AI test failed: structured output did not match schema.${preview ? ` Response preview: ${preview}` : ""}`;
+            this.recordError({ scope: "testConnection", scenario: "ai-settings.connection-test", event: "schema_failed", message, ...(lastStatusCode !== undefined ? { statusCode: lastStatusCode } : {}), durationMs });
+            return { ok: false, message, ...(lastStatusCode !== undefined ? { statusCode: lastStatusCode } : {}), durationMs };
         }
         catch (caught) {
             const durationMs = Date.now() - startedAt;
@@ -189,14 +206,55 @@ function isAbortError(error: unknown): boolean {
     return error instanceof Error && (error.name === "AbortError" || error.message === "This operation was aborted");
 }
 
-function parseStructuredInsert(content: string): boolean {
+function parseStructuredConnectionProbe(content: unknown): boolean {
+    if (content && typeof content === "object" && !Array.isArray(content)) {
+        const parsed = content as Record<string, unknown>;
+        return typeof parsed.status === "string" || typeof parsed.insert === "string";
+    }
+    if (typeof content !== "string") return false;
+    const parsed = parseJsonObject(stripFencedText(stripModelReasoning(content)));
+    return Boolean(parsed && (typeof parsed.status === "string" || typeof parsed.insert === "string"));
+}
+
+function previewStructuredContent(content: unknown): string {
+    if (content && typeof content === "object" && !Array.isArray(content)) {
+        const normalized = JSON.stringify(content).replace(/\s+/g, " ").trim();
+        if (!normalized) return "";
+        return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+    }
+    if (typeof content !== "string") return "";
+    const normalized = stripFencedText(stripModelReasoning(content)).replace(/\s+/g, " ").trim();
+    if (!normalized) return "";
+    return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+}
+
+function stripModelReasoning(value: string): string {
+    const withoutClosedBlocks = value.replace(/<think>[\s\S]*?<\/think>/gi, "");
+    const openBlockIndex = withoutClosedBlocks.search(/<think>/i);
+    return openBlockIndex >= 0 ? withoutClosedBlocks.slice(0, openBlockIndex) : withoutClosedBlocks;
+}
+
+function stripFencedText(value: string): string {
+    const trimmed = value.trim();
+    const match = trimmed.match(/^```(?:\w+)?\s*([\s\S]*?)\s*```$/);
+    return match?.[1]?.trim() ?? trimmed;
+}
+
+function jsonCandidate(value: string): string {
+    const trimmed = value.trim();
+    const objectStart = trimmed.indexOf("{");
+    const objectEnd = trimmed.lastIndexOf("}");
+    if (objectStart >= 0 && objectEnd > objectStart) return trimmed.slice(objectStart, objectEnd + 1);
+    return trimmed;
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | undefined {
     try {
-        const parsed = JSON.parse(content.trim()) as unknown;
-        return Boolean(parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof (parsed as { insert?: unknown }).insert === "string");
+        const parsed = JSON.parse(jsonCandidate(value)) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
     }
-    catch {
-        return false;
-    }
+    catch { }
+    return undefined;
 }
 
 function normalizeAiLogEntry(value: unknown): AiLogEntry | undefined {

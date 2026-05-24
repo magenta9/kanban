@@ -76,6 +76,28 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         context: context(card({ title: "输出格式", descriptionText: "需要补齐输出格式说明。" }))
     },
     {
+        id: "description-option-fragment-weak-context",
+        field: "description",
+        dimensions: ["weak-local-fragment", "option-continuation", "unexpected-empty-risk"],
+        textBeforeCursor: "先整理出流程文章，然后再思考怎么弄成agent定时执行\n\n优化趋势交易信号\n\n方案1:1w、2w同向方向一致才是方向一致\n方案2:其他的趋势",
+        textAfterCursor: "",
+        maxChars: 12,
+        expectedBehavior: "accept",
+        blockedInsertions: [
+            "先整理出流程文章，然后再思考怎么弄成agent定时执行",
+            "优化趋势交易信号",
+            "方案1:1w、2w同向方向一致才是方向一致",
+            "方案2:其他的趋势"
+        ],
+        idealInsertions: ["线指标", "线形态确认"],
+        expectedNotes: "Do not return empty on an unfinished option fragment. Continue the current option with a short peer fragment that stays at the same granularity as the neighboring option line and current card context.",
+        context: context(card({
+            title: "趋势交易的agent",
+            descriptionText: "先整理出流程文章，然后再思考怎么弄成agent定时执行\n\n优化趋势交易信号\n\n方案1:1w、2w同向方向一致才是方向一致\n方案2:其他的趋势",
+            comments: ["可以补充趋势线指标作为辅助信号", "再补一条趋势线形态确认规则"]
+        }))
+    },
+    {
         id: "subtask-prefix-fragment",
         field: "subtask",
         textBeforeCursor: "补齐",

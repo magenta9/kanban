@@ -186,6 +186,17 @@ describe("board label prefix suggestions", () => {
             { name: "Bug", existingLabelId: "bug" }
         ]);
     });
+
+    it("deduplicates local tag suggestions by normalized label name", () => {
+        expect(suggestBoardLabelsByPrefix([
+            testLabel("bug-1", "Bug"),
+            testLabel("bug-2", " bug "),
+            testLabel("backend", "Backend")
+        ], [], "b", 5)).toEqual([
+            { name: "Backend", existingLabelId: "backend" },
+            { name: "Bug", existingLabelId: "bug-1" }
+        ]);
+    });
 });
 
 describe("inline completion focus guard", () => {

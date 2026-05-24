@@ -7,6 +7,7 @@ import { aiCompletionFixtures, type AiCompletionFixture } from "./ai-completion-
 import {
     blockedDescriptionInsertions,
     buildTextMessages,
+    buildTextPromptInput,
     defaultSuggestionProfile,
     localCursorLine,
     previousListItems,
@@ -17,11 +18,11 @@ import {
     textSuggestionOutputSchema,
     type ReviewScoreKey
 } from "../packages/main/src/ai/suggestion-contract";
-import { normalizeInsertionSuggestion, normalizeTextSuggestion } from "../packages/main/src/ai/suggestion-service";
+import { normalizeTextSuggestion, resolveTextSuggestion } from "../packages/main/src/ai/suggestion-service";
 
 const defaultModel = "qwen3.5:2b-mlx";
 const defaultBaseUrl = "http://localhost:11434";
-const defaultLimitPerField = 12;
+const defaultLimitPerField = 16;
 const passScore = 80;
 
 type EvalVariant = "baseline" | "current";
@@ -70,11 +71,10 @@ const baselinePrompts: Record<AiTextSuggestionField, string> = {
         "Do not repeat textBeforeCursor, textAfterCursor, or the whole current description.",
         "Never return any text from blockedInsertions, even with small wording changes.",
         "For numbered-list mode, complete the current list item only; never duplicate or paraphrase previousListItems.",
-        "For bullet mode only, return the missing words after the current bullet text; for localLine.before '- 补充构建流程的', insert '关键步骤和验证方式', not '- 补充构建流程的'.",
+        "For bullet mode only, return only the missing words after the current bullet text; never repeat the bullet marker or the existing bullet text itself.",
         "If textBeforeCursor already names the subject or object, continue with the missing attribute, action, or detail; do not restate that noun.",
-        "For example, after '需要分析持有标的的', insert '仓位、盈亏和风险点', not '待分析标的...'.",
         "If the previous list item already asks to clarify scope, data source, and output format, return {\"insert\":\"\"} instead of suggesting the same requirement again.",
-        "For example, when previousListItems contains '需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式。' and localLine.before is '2.', return {\"insert\":\"\"}, not '明确分析的具体标的范围、历史数据获取方式以及预期输出格式。'.",
+        "For a bare next numbered item after an existing requirement checklist, return {\"insert\":\"\"} instead of expanding another copy of that checklist.",
         "If localLine.before already ends with terminal punctuation, return {\"insert\":\"\"} unless there is a distinct grounded continuation.",
         "If localLine.before is only a heading, return {\"insert\":\"\"}.",
         "Continue the user's current thought with new useful text implied by the card, but do not invent concrete dates, decisions, metrics, or commitments.",
@@ -88,7 +88,6 @@ const baselinePrompts: Record<AiTextSuggestionField, string> = {
         "The insert must fit exactly between subtaskBeforeCursor and subtaskAfterCursor.",
         "Do not repeat the current subtask text, sibling subtasks, or the full card description.",
         "Return only the missing words for the current subtask, not a full sentence when the prefix already exists.",
-        "For subtaskBeforeCursor '补齐', a good insert is '验收标准'; a bad insert is '我会补齐验收标准'.",
         "Prefer a short actionable fragment that matches the card's existing subtasks.",
         "Do not invent dates, owners, promises, or completion claims that are not in context.",
         "Return {\"insert\":\"\"} if the next text is not obvious.",
@@ -151,11 +150,22 @@ function selectedFixtures(options: CliOptions): AiCompletionFixture[] {
 
 async function evaluateFixture(options: CliOptions, fixture: AiCompletionFixture, variant: EvalVariant): Promise<EvalResult> {
     const input = toSuggestionInput(fixture);
-    const messages = variant === "current" ? buildTextMessages(input) : baselineMessages(fixture);
+    const promptInput = variant === "current" ? buildTextPromptInput(input) : baselinePromptInput(fixture);
+    const messages = variant === "current"
+        ? [
+            { role: "system", content: buildTextMessages(input)[0].content },
+            { role: "user", content: JSON.stringify(promptInput) }
+        ]
+        : [
+            { role: "system", content: baselinePrompts[fixture.field] },
+            { role: "user", content: JSON.stringify(promptInput) }
+        ];
     const raw = await chat(options.baseUrl, options.model, messages, generationTokens(fixture.field), 0.2, `${fixture.id}:${variant}`, textSuggestionOutputSchema);
-    const contractOk = Boolean(normalizeTextSuggestion(raw, fixture.field) || raw.includes('"insert"'));
-    const insertion = normalizeInsertionSuggestion(normalizeTextSuggestion(raw, fixture.field), fixture.textBeforeCursor, fixture.textAfterCursor);
-    const diagnostics = collectDiagnostics(fixture, raw, insertion, contractOk);
+    const resolved = resolveTextSuggestion(raw, promptInput, input);
+    const rawContractOk = Boolean(normalizeTextSuggestion(raw, fixture.field) || raw.includes('"insert"'));
+    const contractOk = rawContractOk || Boolean(resolved.finalSuggestion);
+    const insertion = resolved.finalSuggestion;
+    const diagnostics = collectDiagnostics(fixture, raw, insertion, contractOk, rawContractOk);
     const review = await reviewCompletion(options, fixture, variant, messages, raw, insertion, diagnostics);
     const weightedStars = weightedAverage(review.scores, reviewWeights);
     const score = round(weightedStars / 5 * 100, 1);
@@ -446,10 +456,11 @@ function capScores(scores: ReviewScores, caps: Partial<Record<ReviewScoreKey, nu
     })) as ReviewScores;
 }
 
-function collectDiagnostics(fixture: AiCompletionFixture, raw: string, insertion: string, contractOk: boolean): Record<string, boolean> {
+function collectDiagnostics(fixture: AiCompletionFixture, raw: string, insertion: string, contractOk: boolean, rawContractOk: boolean): Record<string, boolean> {
     const expectedEmpty = fixture.expectedBehavior === "reject" && insertion.length === 0;
     return {
         contractOk,
+        rawContractOk,
         withinLimit: expectedEmpty || isSuggestionWithinLimit(insertion, fixture.maxChars),
         blockedHit: containsBlockedInsertion(insertion, fixture.blockedInsertions),
         idealHit: fixture.expectedBehavior === "accept" && idealInsertionHit(insertion, fixture.idealInsertions ?? []),
@@ -579,9 +590,13 @@ function uniqueStrings(values: string[]): string[] {
 
 interface SummaryGroup {
     cases: number;
+    acceptCases: number;
+    rejectCases: number;
     averageStars: number;
     averageScore: number;
     passRate: number;
+    unexpectedEmptyAccepts: number;
+    rejectViolations: number;
 }
 
 function summarizeByVariant(results: EvalResult[]): Record<EvalVariant, SummaryGroup> {
@@ -593,16 +608,22 @@ function summarizeByVariant(results: EvalResult[]): Record<EvalVariant, SummaryG
 
 function summarizeGroup(results: EvalResult[]): SummaryGroup {
     const total = results.length;
+    const acceptCases = results.filter((result) => result.expectedBehavior === "accept").length;
+    const rejectCases = results.filter((result) => result.expectedBehavior === "reject").length;
     const averageStars = total ? round(results.reduce((sum, result) => sum + result.stars, 0) / total, 2) : 0;
     const averageScore = total ? round(results.reduce((sum, result) => sum + result.score, 0) / total, 1) : 0;
     const passRate = total ? round(results.filter((result) => result.pass).length / total * 100, 1) : 0;
-    return { cases: total, averageStars, averageScore, passRate };
+    const unexpectedEmptyAccepts = results.filter((result) => result.expectedBehavior === "accept" && result.diagnostics.unexpectedEmpty).length;
+    const rejectViolations = results.filter((result) => result.expectedBehavior === "reject" && result.diagnostics.expectedRejectViolated).length;
+    return { cases: total, acceptCases, rejectCases, averageStars, averageScore, passRate, unexpectedEmptyAccepts, rejectViolations };
 }
 
 function delta(group: Record<EvalVariant, SummaryGroup>): object {
     return {
         averageScore: round(group.current.averageScore - group.baseline.averageScore, 1),
-        passRate: round(group.current.passRate - group.baseline.passRate, 1)
+        passRate: round(group.current.passRate - group.baseline.passRate, 1),
+        unexpectedEmptyAccepts: group.current.unexpectedEmptyAccepts - group.baseline.unexpectedEmptyAccepts,
+        rejectViolations: group.current.rejectViolations - group.baseline.rejectViolations
     };
 }
 
@@ -632,7 +653,7 @@ async function main(): Promise<void> {
             "  --reviewer-model <name>     Ollama model for reviewer scoring",
             "  --reviewer-base-url <url>   Ollama reviewer base URL",
             "  --field <name>              description | subtask | comment | all",
-            "  --limit-per-field <n>       Static fixtures per field, default 12",
+            "  --limit-per-field <n>       Static fixtures per field, default 16",
             "  --report-path <path>        Write the final JSON report to a file and print a compact summary",
             "  --json                      Include per-case results in final report"
         ].join("\n"));

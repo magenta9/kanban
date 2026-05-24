@@ -185,8 +185,15 @@ export function suggestBoardLabelsByPrefix(labels: KanbanLabel[], attachedLabelI
     const prefixIndex = buildLabelPrefixIndex(labels);
     const attached = new Set(attachedLabelIds);
     const prefix = labelSearchKey(draft);
+    const seen = new Set<string>();
     return (prefixIndex.get(prefix) ?? [])
         .filter((label) => !attached.has(label.id))
+        .filter((label) => {
+            const key = labelSearchKey(label.name);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        })
         .slice(0, maxSuggestions)
         .map((label) => ({ name: label.name, existingLabelId: label.id }));
 }

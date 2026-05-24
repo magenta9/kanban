@@ -47,10 +47,10 @@ describe("AiSettingsService", () => {
                 model: "llama3.2",
                 stream: false,
                 think: false,
-                format: { type: "object", properties: { insert: { type: "string" } }, required: ["insert"], additionalProperties: false },
+                format: { type: "object", properties: { status: { type: "string" } }, required: ["status"], additionalProperties: false },
                 options: { num_predict: 12 }
             });
-            return new Response(JSON.stringify({ message: { content: '{"insert":"ok"}' } }), { status: 200 });
+            return new Response(JSON.stringify({ message: { content: '{"status":"ok"}' } }), { status: 200 });
         }));
 
         await expect(service.testConnection()).resolves.toMatchObject({ ok: true, message: "AI structured output succeeded." });
@@ -68,12 +68,60 @@ describe("AiSettingsService", () => {
         expect(entry.timestamp).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/));
     });
 
+    it("accepts structured output wrapped in reasoning and code fences", async () => {
+        const { service } = createService();
+        service.saveSettings({ enabled: true, baseUrl: "http://localhost:11434", model: "qwen3.5:latest" });
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+            message: {
+                content: '<think>done</think>```json\n{"status":"ok"}\n```'
+            }
+        }), { status: 200 })));
+
+        await expect(service.testConnection()).resolves.toMatchObject({ ok: true, message: "AI structured output succeeded." });
+    });
+
+    it("accepts legacy insert-based structured responses", async () => {
+        const { service } = createService();
+        service.saveSettings({ enabled: true, baseUrl: "http://localhost:11434", model: "llama3.2" });
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+            message: {
+                content: '{"insert":"ok"}'
+            }
+        }), { status: 200 })));
+
+        await expect(service.testConnection()).resolves.toMatchObject({ ok: true, message: "AI structured output succeeded." });
+    });
+
+    it("accepts object-valued structured responses", async () => {
+        const { service } = createService();
+        service.saveSettings({ enabled: true, baseUrl: "http://localhost:11434", model: "qwen3.5:2b-mlx" });
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+            message: {
+                content: { status: "ok" }
+            }
+        }), { status: 200 })));
+
+        await expect(service.testConnection()).resolves.toMatchObject({ ok: true, message: "AI structured output succeeded." });
+    });
+
+    it("retries once when the first structured probe does not match schema", async () => {
+        const { service } = createService();
+        service.saveSettings({ enabled: true, baseUrl: "http://localhost:11434", model: "qwen3.5:2b-mlx" });
+        const fetch = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({ message: { content: "" } }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ message: { content: '{"status":"ok"}' } }), { status: 200 }));
+        vi.stubGlobal("fetch", fetch);
+
+        await expect(service.testConnection()).resolves.toMatchObject({ ok: true, message: "AI structured output succeeded." });
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
     it("fails connection testing when structured output is not valid", async () => {
         const { service } = createService();
         service.saveSettings({ enabled: true, baseUrl: "http://localhost:11434", model: "llama3.2" });
         vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ message: { content: "ok" } }), { status: 200 })));
 
-        await expect(service.testConnection()).resolves.toMatchObject({ ok: false, message: "AI test failed: structured output did not match schema." });
+        await expect(service.testConnection()).resolves.toMatchObject({ ok: false, message: "AI test failed: structured output did not match schema. Response preview: ok" });
     });
 
     it("includes provider error details when connection testing fails", async () => {

@@ -1,5 +1,5 @@
 import type { AiLabelSuggestion, AiLabelSuggestionInput, AiLabelSuggestionResult, AiLogPrompt, AiTextSuggestionField, AiTextSuggestionInput, AiTextSuggestionResult } from "@kanban/shared";
-import { blockedDescriptionInsertions, buildLabelMessages, buildTextMessages, dominantLabelScript, isAsciiText, labelSuggestionOutputSchema, localCursorLine, normalizeLabelName as normalizeContractLabelName, previousListItems, textMaxTokens, textSuggestionOutputSchema } from "./suggestion-contract";
+import { blockedDescriptionInsertions, buildLabelMessages, buildTextPromptInput, buildTextSystemPrompt, labelSuggestionOutputSchema, localCursorLine, normalizeLabelName as normalizeContractLabelName, previousListItems, textMaxTokens, textSuggestionOutputSchema } from "./suggestion-contract";
 import { chatCompletionHeaders, ollamaChatBody, ollamaChatUrl, responseErrorDetail, type AiSettingsService } from "./settings-service";
 
 interface OllamaChatResponse {
@@ -33,8 +33,17 @@ export class AiSuggestionService {
         }
 
         const startedAt = Date.now();
-        const messages = buildTextMessages(input);
+        const promptInput = buildTextPromptInput(input);
+        const messages = [
+            { role: "system", content: buildTextSystemPrompt(input.field) },
+            { role: "user", content: JSON.stringify(promptInput) }
+        ];
         const prompt = logPrompt(messages);
+        const emptyReason = requestedEmptyCompletionReason(promptInput);
+        if (emptyReason) {
+            this.settings.recordEvent({ level: "info", scope, scenario, event: "skipped", prompt, message: `AI text suggestion skipped: ${emptyReason}.`, durationMs: Date.now() - startedAt });
+            return {};
+        }
         try {
             const result = await this.complete({
                 baseUrl: state.baseUrl,
@@ -45,13 +54,22 @@ export class AiSuggestionService {
             });
             const durationMs = Date.now() - startedAt;
             const content = result.content;
-            const normalized = normalizeTextSuggestion(content);
-            const suggestion = normalizeInsertionSuggestion(normalized, input.textBeforeCursor, input.textAfterCursor);
-            if (isUsableTextSuggestion(suggestion, input)) {
-                this.settings.recordEvent({ level: "info", scope, scenario, event: "success", prompt, message: `AI text suggestion completed: ${[...suggestion].length} characters.`, statusCode: result.statusCode, durationMs });
-                return { suggestion };
+            const resolved = resolveTextSuggestion(content, promptInput, input);
+            const { normalized, suggestion, finalSuggestion, usedFallback, usedShortened } = resolved;
+            if (finalSuggestion) {
+                this.settings.recordEvent({
+                    level: "info",
+                    scope,
+                    scenario,
+                    event: "success",
+                    prompt,
+                    message: `AI text suggestion completed: ${[...finalSuggestion].length} characters${usedFallback ? " (grounded hint fallback)" : usedShortened ? " (shortened to fit limit)" : ""}.`,
+                    statusCode: result.statusCode,
+                    durationMs
+                });
+                return { suggestion: finalSuggestion };
             }
-            this.settings.recordEvent({ level: "warn", scope, scenario, event: "discarded", prompt, message: textSuggestionDiscardMessage(content, normalized, suggestion, input.maxChars), statusCode: result.statusCode, durationMs });
+            this.settings.recordEvent({ level: "warn", scope, scenario, event: "discarded", prompt, message: textSuggestionDiscardMessage(content, normalized, suggestion, input), statusCode: result.statusCode, durationMs });
         }
         catch (caught) {
             this.settings.recordError({ scope, scenario, event: "error", prompt, message: errorMessage(caught), ...errorStatusCode(caught), durationMs: Date.now() - startedAt });
@@ -82,9 +100,7 @@ export class AiSuggestionService {
             });
             const durationMs = Date.now() - startedAt;
             const suggestions = normalizeLabelSuggestions(result.content, input.maxSuggestions, input.context.boardLabels, input.context.currentCard.labelIds)
-                .filter((suggestion) => normalizeLabelName(suggestion.name) !== normalizeLabelName(input.context.currentCard.title))
-                .filter((suggestion) => isUsefulLabelName(suggestion.name))
-                .filter((suggestion) => suggestion.existingLabelId || matchesBoardLabelStyle(suggestion.name, input.context.boardLabels));
+                .filter((suggestion) => normalizeLabelName(suggestion.name) !== normalizeLabelName(input.context.currentCard.title));
             this.settings.recordEvent({
                 level: suggestions.length > 0 ? "info" : "warn",
                 scope,
@@ -134,7 +150,7 @@ export function isSuggestionWithinLimit(value: string, maxChars: number): boolea
 export function isUsableTextSuggestion(value: string, input: Pick<AiTextSuggestionInput, "field" | "maxChars"> & Partial<Pick<AiTextSuggestionInput, "textBeforeCursor">>): boolean {
     if (!isSuggestionWithinLimit(value, input.maxChars)) return false;
     if (input.field === "description" && input.textBeforeCursor && !isUsefulDescriptionInsertion(value, input.textBeforeCursor)) return false;
-    if (input.field === "comment" && input.textBeforeCursor && isAmbiguousCommentPrefix(input.textBeforeCursor)) return false;
+    if (input.field === "comment" && input.textBeforeCursor && !isUsefulCommentInsertion(value, input.textBeforeCursor)) return false;
     return true;
 }
 
@@ -148,6 +164,28 @@ export function normalizeTextSuggestion(value: string, _field?: AiTextSuggestion
     if (!parsed) return "";
     const text = parsed.insert;
     return typeof text === "string" ? text : "";
+}
+
+export function resolveTextSuggestion(raw: string, promptInput: object, input: AiTextSuggestionInput): {
+    normalized: string;
+    suggestion: string;
+    finalSuggestion: string;
+    usedFallback: boolean;
+    usedShortened: boolean;
+} {
+    const normalized = normalizeTextSuggestion(raw, input.field);
+    const suggestion = normalizeInsertionSuggestion(normalized, input.textBeforeCursor, input.textAfterCursor);
+    const fallbackSuggestion = groundedHintFallback(promptInput, input);
+    const shortenedSuggestion = fallbackSuggestion ? "" : shortenSuggestionToFit(suggestion, input);
+    const preferGroundedHint = shouldPreferGroundedHint(suggestion, fallbackSuggestion, input);
+    const finalSuggestion = isUsableTextSuggestion(suggestion, input) && !preferGroundedHint ? suggestion : fallbackSuggestion || shortenedSuggestion;
+    return {
+        normalized,
+        suggestion,
+        finalSuggestion,
+        usedFallback: finalSuggestion === fallbackSuggestion && finalSuggestion !== suggestion,
+        usedShortened: finalSuggestion === shortenedSuggestion && finalSuggestion !== suggestion
+    };
 }
 
 export function normalizeInsertionSuggestion(value: string, textBeforeCursor: string, textAfterCursor: string): string {
@@ -208,6 +246,99 @@ function logPrompt(messages: Array<{ role: string; content: string }>): AiLogPro
     return { messages };
 }
 
+function requestedEmptyCompletionReason(promptInput: object): string | undefined {
+    const completionDecision = (promptInput as { completionDecision?: { returnEmpty?: boolean; reason?: unknown } }).completionDecision;
+    if (!completionDecision?.returnEmpty) return undefined;
+    return typeof completionDecision.reason === "string" && completionDecision.reason.trim()
+        ? completionDecision.reason
+        : "local contract requested an empty completion";
+}
+
+function groundedHintFallback(promptInput: object, input: AiTextSuggestionInput): string {
+    const hint = (promptInput as { groundedContinuationHint?: unknown }).groundedContinuationHint;
+    if (typeof hint !== "string" || !hint.trim()) return "";
+    const suggestion = normalizeInsertionSuggestion(hint, input.textBeforeCursor, input.textAfterCursor);
+    return isUsableTextSuggestion(suggestion, input) ? suggestion : "";
+}
+
+function shouldPreferGroundedHint(suggestion: string, groundedHint: string, input: AiTextSuggestionInput): boolean {
+    if (!suggestion.trim() || !groundedHint.trim()) return false;
+
+    if (input.field === "comment") {
+        return shouldPreferGroundedCommentHint(suggestion, groundedHint, input.textBeforeCursor);
+    }
+
+    if (input.field !== "description") return false;
+
+    const localLine = localCursorLine(input.textBeforeCursor, input.textAfterCursor).before.trim();
+    const structuredMode = descriptionStructuredMode(input.textBeforeCursor, localLine);
+    if (structuredMode) {
+        return normalizeStructuredValue(suggestion) !== normalizeStructuredValue(groundedHint);
+    }
+
+    if (!/[、,，]/.test(groundedHint)) return false;
+    if (!/[的:：]$/.test(localLine)) return false;
+
+    const normalizedSuggestion = normalizeListItemMeaning(suggestion);
+    const normalizedHint = normalizeListItemMeaning(groundedHint);
+    if (!normalizedSuggestion || !normalizedHint.includes(normalizedSuggestion)) return false;
+    return [...suggestion.trim()].length <= 2 && [...groundedHint.trim()].length > [...suggestion.trim()].length;
+}
+
+function descriptionStructuredMode(textBeforeCursor: string, lineBeforeCursor: string): "table" | "code" | "" {
+    if ((textBeforeCursor.match(/```/g)?.length ?? 0) % 2 === 1) return "code";
+    if (lineBeforeCursor.includes("|")) return "table";
+    return "";
+}
+
+function normalizeStructuredValue(value: string): string {
+    return value.trim().replace(/\s+/g, "");
+}
+
+function shouldPreferGroundedCommentHint(suggestion: string, groundedHint: string, textBeforeCursor: string): boolean {
+    const localLine = localCursorLine(textBeforeCursor, "").before.trim();
+    if (/^结论(?:\s|$)/u.test(localLine)) return suggestion.trim() !== groundedHint.trim();
+    if (/^风险(?:\s|$)/u.test(localLine)) return suggestion.trim() !== groundedHint.trim();
+
+    const mode = localCommentMode(localLine);
+    if (mode === "action") {
+        if (/^(?:需|需要|待)\s*/u.test(suggestion.trim()) && groundedHint.trim() !== suggestion.trim()) return true;
+        if (groundedHint.includes("文档") && !suggestion.includes("文档") && groundedHint.trim() !== suggestion.trim()) return true;
+        return false;
+    }
+    if (mode === "status") {
+        if (/^(?:sync update|update|status)\b/i.test(localLine)) return groundedHint.trim() !== suggestion.trim();
+        if (/^今天(?:\s|$)/u.test(localLine)) return groundedHint.trim() !== suggestion.trim();
+        return /^已/u.test(suggestion.trim()) && groundedHint.trim() !== suggestion.trim();
+    }
+    if (mode === "reply") return [...suggestion.trim()].length <= 4 && [...groundedHint.trim()].length > [...suggestion.trim()].length;
+    return false;
+}
+
+function localCommentMode(localLine: string): "reply" | "status" | "action" | "note" {
+    const trimmed = localLine.trimStart().toLowerCase();
+    if (/^(reply|re:)\b/.test(trimmed) || trimmed.startsWith("回复")) return "reply";
+    if (/^(todo|action|next)\b/.test(trimmed) || trimmed.startsWith("下一步") || trimmed.startsWith("待办")) return "action";
+    if (/^(status|update|sync update)\b/.test(trimmed) || trimmed.startsWith("进展") || trimmed.startsWith("状态") || trimmed.startsWith("今天") || trimmed.startsWith("今日")) return "status";
+    return "note";
+}
+
+function shortenSuggestionToFit(value: string, input: AiTextSuggestionInput): string {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const candidates = [
+        ...trimmed.split(/\n+/),
+        ...trimmed.split(/[。.!?！？]/),
+        ...trimmed.split(/[，,、；;]/)
+    ].map((candidate) => candidate.trim()).filter(Boolean);
+    for (const candidate of candidates) {
+        if (candidate !== trimmed && isUsableTextSuggestion(candidate, input)) return candidate;
+    }
+
+    const sliced = [...trimmed].slice(0, input.maxChars).join("").trim();
+    return isUsableTextSuggestion(sliced, input) ? sliced : "";
+}
+
 function isRepeatedDescriptionListItem(value: string, textBeforeCursor: string): boolean {
     const candidate = normalizeListItemMeaning(value);
     if (candidate.length < 8) return false;
@@ -221,6 +352,15 @@ function isUsefulDescriptionInsertion(value: string, textBeforeCursor: string): 
     if (/^#{1,6}\s+\S+\s*$/.test(localLine)) return false;
     if (!/^(?:[-*+]\s*|\d+[.)]\s*)$/.test(localLine) && /[。.!！?？]$/.test(localLine)) return false;
     if (/^\d+[.)]\s*$/.test(localLine) && previousListContainsRequirementChecklist(textBeforeCursor)) return false;
+    if (/^[-*+]\s/.test(localLine) && /^[-*+]\s/.test(value.trimStart())) return false;
+    if (localLine.includes("|")) {
+        const rowLabel = localLine.split("|").map((cell) => cell.trim()).filter(Boolean)[0] ?? "";
+        if (rowLabel && normalizeListItemMeaning(value) === normalizeListItemMeaning(rowLabel)) return false;
+    }
+    if ((textBeforeCursor.match(/```/g)?.length ?? 0) % 2 === 1) {
+        const propertyMatch = localLine.match(/"([^"\\]+)"\s*:\s*$/);
+        if (propertyMatch?.[1] && normalizeListItemMeaning(value) === normalizeListItemMeaning(propertyMatch[1])) return false;
+    }
     return !isRepeatedDescriptionListItem(value, textBeforeCursor) && !containsBlockedDescriptionInsertion(value, textBeforeCursor);
 }
 
@@ -257,14 +397,15 @@ function isAmbiguousCommentPrefix(textBeforeCursor: string): boolean {
     return /^(嗯|好|好的|收到|ok|okay)$/iu.test(localLine);
 }
 
-function matchesBoardLabelStyle(value: string, boardLabels: Array<{ name: string }>): boolean {
-    const dominantScript = dominantLabelScript(boardLabels.map((label) => label.name));
-    if (dominantScript !== "ascii") return true;
-    return isAsciiText(value);
-}
-
-function isUsefulLabelName(value: string): boolean {
-    return !/^[\d\W_]+$/u.test(value.trim());
+function isUsefulCommentInsertion(value: string, textBeforeCursor: string): boolean {
+    if (isAmbiguousCommentPrefix(textBeforeCursor)) return false;
+    const localLine = localCursorLine(textBeforeCursor, "").before.trim();
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    if (trimmed === localLine) return false;
+    if (/^(?:reply|re:|回复|status|update|sync update:)\s*$/iu.test(trimmed)) return false;
+    if (/^(?:reply|re:|回复|进展|状态|status|update|sync update:)/iu.test(localLine) && [...trimmed].length < 2) return false;
+    return true;
 }
 
 function textSuggestionScenario(field: AiTextSuggestionField): string {
@@ -273,11 +414,18 @@ function textSuggestionScenario(field: AiTextSuggestionField): string {
     return "inline-completion.comment";
 }
 
-function textSuggestionDiscardMessage(raw: string, normalized: string, suggestion: string, maxChars: number): string {
+function textSuggestionDiscardMessage(raw: string, normalized: string, suggestion: string, input: AiTextSuggestionInput): string {
     if (!raw.trim()) return "AI suggestion discarded: provider returned empty content.";
     if (!normalized.trim()) return "AI suggestion discarded: content only contained reasoning or formatting.";
     if (!suggestion.trim()) return "AI suggestion discarded: content repeated cursor context.";
-    return `AI suggestion discarded: ${[...suggestion].length} characters exceeds ${maxChars}.`;
+    if (!isSuggestionWithinLimit(suggestion, input.maxChars)) return `AI suggestion discarded: ${[...suggestion].length} characters exceeds ${input.maxChars}.`;
+    if (input.field === "description" && input.textBeforeCursor && !isUsefulDescriptionInsertion(suggestion, input.textBeforeCursor)) {
+        return "AI suggestion discarded: content conflicted with nearby description context.";
+    }
+    if (input.field === "comment" && input.textBeforeCursor && isAmbiguousCommentPrefix(input.textBeforeCursor)) {
+        return "AI suggestion discarded: comment prefix is too ambiguous for a grounded continuation.";
+    }
+    return "AI suggestion discarded: content failed local usefulness checks.";
 }
 
 function stripModelReasoning(value: string): string {
