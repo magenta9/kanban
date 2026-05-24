@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { AiTextSuggestionInput, KanbanCard } from "@kanban/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AiSettingsService } from "./settings-service";
-import { AiSuggestionService, isSuggestionWithinLimit, isUsableTextSuggestion, normalizeInsertionSuggestion, normalizeLabelName, normalizeLabelSuggestions, normalizeSuggestion, normalizeTextSuggestion } from "./suggestion-service";
+import { AiSuggestionService, normalizeInsertionSuggestion, normalizeLabelName, normalizeLabelSuggestions, normalizeSuggestion, normalizeTextSuggestion } from "./suggestion-service";
 
 let tempRoots: string[] = [];
 
@@ -22,13 +22,6 @@ afterEach(() => {
 });
 
 describe("AI text suggestion normalization", () => {
-    it("accepts non-empty suggestions within the character limit", () => {
-        expect(isSuggestionWithinLimit("补全标题", 15)).toBe(true);
-        expect(isSuggestionWithinLimit("", 15)).toBe(false);
-        expect(isSuggestionWithinLimit("。", 15)).toBe(false);
-        expect(isSuggestionWithinLimit("这是一段超过限制的补全文本", 5)).toBe(false);
-    });
-
     it("strips fenced text wrappers", () => {
         expect(normalizeSuggestion("```markdown\n- Finish review\n```")).toBe("- Finish review");
     });
@@ -45,12 +38,6 @@ describe("AI text suggestion normalization", () => {
         expect(normalizeTextSuggestion("估值变化", "description")).toBe("");
     });
 
-    it("accepts concise subtask insertions within the character limit", () => {
-        expect(isUsableTextSuggestion("验收标准", { field: "subtask", maxChars: 15 })).toBe(true);
-        expect(isUsableTextSuggestion("这是一段超过限制的子任务补全文本", { field: "subtask", maxChars: 5 })).toBe(false);
-        expect(isUsableTextSuggestion("。", { field: "subtask", maxChars: 15 })).toBe(false);
-    });
-
     it("returns subtask suggestions from the insert contract", async () => {
         const { settings, suggestions } = createAiServices();
         settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
@@ -65,63 +52,13 @@ describe("AI text suggestion normalization", () => {
         })).resolves.toEqual({ suggestion: "验收标准" });
     });
 
-    it("rejects repeated description list items", () => {
-        expect(isUsableTextSuggestion("需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式。", {
-            field: "description",
-            textBeforeCursor: "覆盖范围：需要分析持有标的的仓位、盈亏和风险点\n1.需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式。\n2.",
-            maxChars: 50
-        })).toBe(false);
-        expect(isUsableTextSuggestion("补充仓位变化和盈亏归因。", {
-            field: "description",
-            textBeforeCursor: "覆盖范围：需要分析持有标的的仓位、盈亏和风险点\n1.梳理交易明细。\n2.",
-            maxChars: 50
-        })).toBe(true);
-        expect(isUsableTextSuggestion("分析具体标的范围、历史数据获取方式以及预期输出格式。", {
-            field: "description",
-            textBeforeCursor: "覆盖范围：需要分析持有标的的仓位、盈亏和风险点\n1.需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式。\n2.",
-            maxChars: 50
-        })).toBe(false);
-        expect(isUsableTextSuggestion("关键步骤和验证方式", {
-            field: "description",
-            textBeforeCursor: "覆盖范围：需要分析持有标的的仓位、盈亏和风险点\n1.需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式。\n2.",
-            maxChars: 50
-        })).toBe(false);
-    });
-
-    it("rejects description insertions after complete lines and headings", () => {
-        expect(isUsableTextSuggestion("仓位、盈亏和风险点", {
-            field: "description",
-            textBeforeCursor: "持有标的已经确认。",
-            maxChars: 50
-        })).toBe(false);
-        expect(isUsableTextSuggestion("仓位、盈亏和风险点", {
-            field: "description",
-            textBeforeCursor: "### 持有标的",
-            maxChars: 50
-        })).toBe(false);
-        expect(isUsableTextSuggestion("- 关键步骤和验证方式", {
-            field: "description",
-            textBeforeCursor: "- 补充构建流程的",
-            maxChars: 40
-        })).toBe(false);
-    });
-
-    it("rejects ambiguous comment prefixes", () => {
-        expect(isUsableTextSuggestion("收到，已同步测试初稿。", {
-            field: "comment",
-            textBeforeCursor: "嗯",
-            maxChars: 24
-        })).toBe(false);
-        expect(isUsableTextSuggestion("今天补齐结论。", {
-            field: "comment",
-            textBeforeCursor: "进展 ",
-            maxChars: 24
-        })).toBe(true);
-    });
-
     it("trims text that overlaps the cursor context", () => {
         expect(normalizeInsertionSuggestion("需要复盘持有标的的估值水平与涨跌原因", "需要复盘持有标的的", "")).toBe("估值水平与涨跌原因");
         expect(normalizeInsertionSuggestion("收盘价和目标价", "复盘", "和目标价")).toBe("收盘价");
+        expect(normalizeInsertionSuggestion("风险复核\n测试结论待同步。", "今天 ", "测试结论待同步\n下一步：同步团队。")).toBe("风险复核");
+        expect(normalizeInsertionSuggestion("先整理出流程文章，然后再思考怎么弄成agent定时执行", "先整理出流程文章，然后再思考怎么弄成agent定时执行\n如果", "")).toBe("");
+        expect(normalizeInsertionSuggestion("观察小级别\n先整理出流程文章，然后再思考怎么弄成 agent 定时执行", "先整理出流程文章，然后再思考怎么弄成agent定时执行\n\n优化趋势交易信号\n\n1. 1w、2w同向方向一致才是方向一致\n2. 寻找其他趋势线\n方案3:", "")).toBe("观察小级别");
+        expect(normalizeInsertionSuggestion("风险复核\n风险复核", "", "")).toBe("风险复核");
     });
 });
 
@@ -164,14 +101,15 @@ describe("AI text suggestions", () => {
         settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
         vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
             const body = JSON.parse(String(init.body)) as { messages: [{ role: string; content: string }, { role: string; content: string }] };
-            expect(body.messages[0].content).toContain("unfinished local phrase itself");
-            expect(body.messages[0].content).toContain("current option with a short peer fragment");
+            expect(body.messages[0].content).toContain("continuationStyleHint");
+            expect(body.messages[0].content).toContain("nearby peer lines");
             expect(JSON.parse(body.messages[1].content)).toMatchObject({
                 scenario: "description",
+                textBeforeCursor: "方案2:其他的趋势",
                 localLine: { before: "方案2:其他的趋势" },
                 groundedContinuationHint: "线指标作为辅助信号",
                 continuationStyleHint: "Continue the current option with a short peer fragment that matches nearby lines; do not start a new sentence or checklist.",
-                recentNonEmptyLines: ["先整理出流程文章，然后再思考怎么弄成agent定时执行", "优化趋势交易信号", "方案1:1w、2w同向方向一致才是方向一致"]
+                recentNonEmptyLines: ["方案1:1w、2w同向方向一致才是方向一致"]
             });
             return new Response(JSON.stringify({ message: { content: '{"insert":"方案2:其他的趋势"}' } }), { status: 200 });
         }));
@@ -195,7 +133,7 @@ describe("AI text suggestions", () => {
                     { id: "label-2", boardId: "board-1", name: "trade", color: "#22c55e" }
                 ]
             }
-        })).resolves.toEqual({ suggestion: "线指标作为辅助信号" });
+        })).resolves.toEqual({});
     });
 
     it("derives grounded continuation hints from normalized description fragments", async () => {
@@ -224,7 +162,7 @@ describe("AI text suggestions", () => {
                 relatedCards: [],
                 boardLabels: []
             }
-        })).resolves.toEqual({ suggestion: "关键步骤和验证方式" });
+        })).resolves.toEqual({});
     });
 
     it("derives grounded continuation hints for markdown table and code contexts", async () => {
@@ -235,6 +173,7 @@ describe("AI text suggestions", () => {
             const promptInput = JSON.parse(body.messages[1].content) as { scenario: string; markdownMode: string; groundedContinuationHint: string };
             if (promptInput.markdownMode === "table") {
                 expect(promptInput.groundedContinuationHint).toBe("85%");
+                expect(promptInput).toMatchObject({ textAfterCursor: " |" });
                 return new Response(JSON.stringify({ message: { content: '{"insert":"| 完成率 | "}' } }), { status: 200 });
             }
             expect(promptInput.markdownMode).toBe("code");
@@ -256,7 +195,7 @@ describe("AI text suggestions", () => {
                 relatedCards: [],
                 boardLabels: []
             }
-        })).resolves.toEqual({ suggestion: "85%" });
+        })).resolves.toEqual({ suggestion: "完成率" });
 
         await expect(suggestions.suggestText({
             field: "description",
@@ -271,12 +210,12 @@ describe("AI text suggestions", () => {
                 relatedCards: [],
                 boardLabels: []
             }
-        })).resolves.toEqual({ suggestion: "30000" });
+        })).resolves.toEqual({});
 
         expect(fetch).toHaveBeenCalledTimes(2);
     });
 
-    it("shortens overlong suggestions to the first usable clause", async () => {
+    it("returns long model suggestions without local shortening", async () => {
         const { settings, suggestions } = createAiServices();
         settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
         vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
@@ -293,10 +232,10 @@ describe("AI text suggestions", () => {
                 relatedCards: [],
                 boardLabels: []
             }
-        })).resolves.toEqual({ suggestion: "小级别趋势变化" });
+        })).resolves.toEqual({ suggestion: "小级别趋势变化，并补充进场条件和止损触发逻辑。" });
     });
 
-    it("prefers a fuller grounded description hint over a one-word attribute fragment", async () => {
+    it("returns model description inserts directly without grounded override", async () => {
         const { settings, suggestions } = createAiServices();
         settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
         vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
@@ -316,10 +255,10 @@ describe("AI text suggestions", () => {
                 relatedCards: [],
                 boardLabels: []
             }
-        })).resolves.toEqual({ suggestion: "仓位、盈亏和风险点" });
+        })).resolves.toEqual({ suggestion: "风险" });
     });
 
-    it("prefers the exact grounded table cell value over a plausible model guess", async () => {
+    it("returns model table-cell inserts directly without grounded override", async () => {
         const { settings, suggestions } = createAiServices();
         settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
         vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
@@ -339,19 +278,19 @@ describe("AI text suggestions", () => {
                 relatedCards: [],
                 boardLabels: []
             }
-        })).resolves.toEqual({ suggestion: "85%" });
+        })).resolves.toEqual({ suggestion: "80%" });
     });
 
-    it("logs non-length discard reasons without mislabeling them as maxChars overflow", async () => {
+    it("discards only when cursor-fit normalization removes all text", async () => {
         const { root, settings, suggestions } = createAiServices();
         settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
         vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-            message: { content: '{"insert":"收到，已同步测试初稿。"}' }
+            message: { content: '{"insert":"回复"}' }
         }), { status: 200 })));
 
         await expect(suggestions.suggestText({
             field: "comment",
-            textBeforeCursor: "ok",
+            textBeforeCursor: "回复",
             textAfterCursor: "",
             maxChars: 24,
             context: {
@@ -361,216 +300,14 @@ describe("AI text suggestions", () => {
             }
         })).resolves.toEqual({});
 
-        const entry = JSON.parse(readFileSync(join(root, "ai.log"), "utf8").trim()) as { event: string; message: string };
+        const entry = JSON.parse(readFileSync(join(root, "ai.log"), "utf8").trim()) as { event: string; message: string; promptChars?: number; outputChars?: number };
         expect(entry.event).toBe("discarded");
-        expect(entry.message).toContain("comment prefix is too ambiguous");
-        expect(entry.message).not.toContain("exceeds");
+        expect(entry.message).toContain("content repeated cursor context");
+        expect(entry.promptChars).toEqual(expect.any(Number));
+        expect(entry.outputChars).toEqual(expect.any(Number));
     });
 
-    it("falls back to a grounded reply hint when the model returns a one-character placeholder", async () => {
-        const { settings, suggestions } = createAiServices();
-        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
-        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-            message: { content: '{"insert":"待"}' }
-        }), { status: 200 })));
-
-        await expect(suggestions.suggestText({
-            field: "comment",
-            textBeforeCursor: "回复 ",
-            textAfterCursor: "",
-            maxChars: 24,
-            context: {
-                currentCard: testCard({
-                    title: "设计确认",
-                    descriptionText: "等待设计确认。",
-                    comments: [
-                        { id: "comment-1", body: "设计稿已补截图", createdAt: 1, updatedAt: 1 }
-                    ]
-                }),
-                relatedCards: [],
-                boardLabels: []
-            }
-        })).resolves.toEqual({ suggestion: "设计稿已补截图" });
-    });
-
-    it("falls back to a grounded status hint when the model echoes the local prefix", async () => {
-        const { settings, suggestions } = createAiServices();
-        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
-        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-            message: { content: '{"insert":"Sync update:"}' }
-        }), { status: 200 })));
-
-        await expect(suggestions.suggestText({
-            field: "comment",
-            textBeforeCursor: "Sync update: ",
-            textAfterCursor: "",
-            maxChars: 16,
-            context: {
-                currentCard: testCard({
-                    title: "接口联调",
-                    descriptionText: "API 接口已对齐，还需要同步测试结论。",
-                    comments: [
-                        { id: "comment-1", body: "API接口已对齐", createdAt: 1, updatedAt: 1 }
-                    ]
-                }),
-                relatedCards: [],
-                boardLabels: []
-            }
-        })).resolves.toEqual({ suggestion: "API接口已对齐，测试结论待同步" });
-    });
-
-    it("prefers a grounded action hint over a generic request wrapper", async () => {
-        const { settings, suggestions } = createAiServices();
-        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
-        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-            message: { content: '{"insert":"需补充配置说明"}' }
-        }), { status: 200 })));
-
-        await expect(suggestions.suggestText({
-            field: "comment",
-            textBeforeCursor: "下一步 ",
-            textAfterCursor: "",
-            maxChars: 24,
-            context: {
-                currentCard: testCard({
-                    title: "文档补齐",
-                    descriptionText: "下一步需要补齐文档中的配置说明。"
-                }),
-                relatedCards: [],
-                boardLabels: []
-            }
-        })).resolves.toEqual({ suggestion: "补齐文档中的配置说明" });
-    });
-
-    it("prefers a grounded status hint with temporal evidence over a shorter generic status", async () => {
-        const { settings, suggestions } = createAiServices();
-        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
-        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-            message: { content: '{"insert":"已同步初稿"}' }
-        }), { status: 200 })));
-
-        await expect(suggestions.suggestText({
-            field: "comment",
-            textBeforeCursor: "进展 ",
-            textAfterCursor: "",
-            maxChars: 24,
-            context: {
-                currentCard: testCard({
-                    title: "评论草稿",
-                    descriptionText: "需要整理评论草稿。",
-                    comments: [
-                        { id: "comment-1", body: "昨天已经同步初稿", createdAt: 1, updatedAt: 1 }
-                    ]
-                }),
-                relatedCards: [],
-                boardLabels: []
-            }
-        })).resolves.toEqual({ suggestion: "昨天已经同步初稿" });
-    });
-
-    it("prefers a grounded due-today task fragment over a longer status sentence", async () => {
-        const { settings, suggestions } = createAiServices();
-        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
-        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-            message: { content: '{"insert":"风险复核还在进行中"}' }
-        }), { status: 200 })));
-
-        await expect(suggestions.suggestText({
-            field: "comment",
-            textBeforeCursor: "今天 ",
-            textAfterCursor: "",
-            maxChars: 24,
-            context: {
-                currentCard: testCard({
-                    title: "支付链路上线",
-                    descriptionText: "今天需要完成上线前风险复核。",
-                    comments: [
-                        { id: "comment-1", body: "联调已经通过", createdAt: 1, updatedAt: 1 },
-                        { id: "comment-2", body: "风险复核还在进行", createdAt: 2, updatedAt: 2 }
-                    ]
-                }),
-                relatedCards: [],
-                boardLabels: []
-            }
-        })).resolves.toEqual({ suggestion: "风险复核" });
-    });
-
-    it("prefers a grounded bilingual status recap over a pending-only fragment", async () => {
-        const { settings, suggestions } = createAiServices();
-        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
-        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-            message: { content: '{"insert":"测试结论待同步"}' }
-        }), { status: 200 })));
-
-        await expect(suggestions.suggestText({
-            field: "comment",
-            textBeforeCursor: "Sync update: ",
-            textAfterCursor: "",
-            maxChars: 16,
-            context: {
-                currentCard: testCard({
-                    title: "接口联调",
-                    descriptionText: "API 接口已对齐，还需要同步测试结论。",
-                    comments: [
-                        { id: "comment-1", body: "API接口已对齐", createdAt: 1, updatedAt: 1 }
-                    ]
-                }),
-                relatedCards: [],
-                boardLabels: []
-            }
-        })).resolves.toEqual({ suggestion: "API接口已对齐，测试结论待同步" });
-    });
-
-    it("prefers a grounded risk fragment over a generic risk follow-up", async () => {
-        const { settings, suggestions } = createAiServices();
-        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
-        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-            message: { content: '{"insert":"需要补充影响范围"}' }
-        }), { status: 200 })));
-
-        await expect(suggestions.suggestText({
-            field: "comment",
-            textBeforeCursor: "风险 ",
-            textAfterCursor: "",
-            maxChars: 24,
-            context: {
-                currentCard: testCard({
-                    title: "风险点",
-                    descriptionText: "风险点需要继续确认影响范围。",
-                    comments: [
-                        { id: "comment-1", body: "还缺影响范围", createdAt: 1, updatedAt: 1 }
-                    ]
-                }),
-                relatedCards: [],
-                boardLabels: []
-            }
-        })).resolves.toEqual({ suggestion: "影响范围" });
-    });
-
-    it("prefers a grounded action hint that keeps document context", async () => {
-        const { settings, suggestions } = createAiServices();
-        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
-        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-            message: { content: '{"insert":"补充配置说明"}' }
-        }), { status: 200 })));
-
-        await expect(suggestions.suggestText({
-            field: "comment",
-            textBeforeCursor: "下一步 ",
-            textAfterCursor: "",
-            maxChars: 24,
-            context: {
-                currentCard: testCard({
-                    title: "文档补齐",
-                    descriptionText: "下一步需要补齐文档中的配置说明。"
-                }),
-                relatedCards: [],
-                boardLabels: []
-            }
-        })).resolves.toEqual({ suggestion: "补齐文档中的配置说明" });
-    });
-
-    it("prefers a grounded reply hint over a generic blocked-state placeholder", async () => {
+    it("returns model comment inserts directly without grounded override", async () => {
         const { settings, suggestions } = createAiServices();
         settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
         vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
@@ -584,8 +321,8 @@ describe("AI text suggestions", () => {
             maxChars: 24,
             context: {
                 currentCard: testCard({
-                    title: "每日巡检",
-                    descriptionText: "复发任务因权限缺失暂时阻塞。",
+                    title: "设计确认",
+                    descriptionText: "等待设计确认。",
                     comments: [
                         { id: "comment-1", body: "今天的巡检没有自动生成", createdAt: 1, updatedAt: 1 },
                         { id: "comment-2", body: "需要先恢复权限", createdAt: 2, updatedAt: 2 }
@@ -594,34 +331,7 @@ describe("AI text suggestions", () => {
                 relatedCards: [],
                 boardLabels: []
             }
-        })).resolves.toEqual({ suggestion: "先恢复权限" });
-    });
-
-    it("prefers a grounded conclusion recap over a partial risk fragment", async () => {
-        const { settings, suggestions } = createAiServices();
-        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
-        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-            message: { content: '{"insert":"风险影响范围还需复核"}' }
-        }), { status: 200 })));
-
-        await expect(suggestions.suggestText({
-            field: "comment",
-            textBeforeCursor: "结论 ",
-            textAfterCursor: "",
-            maxChars: 28,
-            context: {
-                currentCard: testCard({
-                    title: "风险评审",
-                    descriptionText: "当前结论倾向继续推进，但风险影响范围还要复核。",
-                    comments: [
-                        { id: "comment-1", body: "可以继续推进", createdAt: 1, updatedAt: 1 },
-                        { id: "comment-2", body: "影响范围还没最终确认", createdAt: 2, updatedAt: 2 }
-                    ]
-                }),
-                relatedCards: [],
-                boardLabels: []
-            }
-        })).resolves.toEqual({ suggestion: "继续推进，但风险影响范围还要复核" });
+        })).resolves.toEqual({ suggestion: "权限问题" });
     });
 });
 
@@ -714,14 +424,11 @@ describe("AI label suggestions", () => {
             event: "success",
             message: "AI tag autocomplete completed: 3 usable suggestions.",
             statusCode: 200,
-            durationMs: expect.any(Number)
+            durationMs: expect.any(Number),
+            promptChars: expect.any(Number),
+            outputChars: expect.any(Number)
         });
-        expect(entry.prompt).toMatchObject({
-            messages: [
-                { role: "system", content: expect.stringContaining("draft") },
-                { role: "user", content: expect.stringContaining('"scenario":"tags"') }
-            ]
-        });
+        expect(entry.prompt).toBeUndefined();
         expect(entry.timestamp).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/));
     });
 });
@@ -745,8 +452,8 @@ describe("AI prompt contracts", () => {
         const entry = JSON.parse(readFileSync(join(root, "ai.log"), "utf8").trim()) as { event: string; message: string; prompt: { messages: [{ content: string }, { content: string }] } };
         expect(entry.event).toBe("skipped");
         expect(entry.message).toContain("bare numbered-list item would likely duplicate previous list items");
-        expect(entry.prompt.messages[0].content).toContain("never duplicate or paraphrase previousListItems");
-        expect(entry.prompt.messages[0].content).toContain("For bullet mode only");
+        expect(entry.prompt.messages[0].content).toContain("previousListItems as style context only");
+        expect(entry.prompt.messages[0].content).toContain("current marker or label");
         expect(JSON.parse(entry.prompt.messages[1].content)).toMatchObject({
             scenario: "description",
             completionDecision: { returnEmpty: true, reason: "bare numbered-list item would likely duplicate previous list items" },
@@ -865,7 +572,7 @@ describe("AI prompt contracts", () => {
             const body = JSON.parse(String(init.body)) as { messages: [{ role: string; content: string }, { role: string; content: string }] };
             expect(body.messages[0].content).toContain("Return JSON with one insert string");
             expect(body.messages[0].content).toContain("subtask title");
-            expect(body.messages[0].content).toContain("short actionable fragment");
+            expect(body.messages[0].content).toContain("shortest missing action or object phrase");
             expect(body.messages[0].content).toContain("Match the language already used in subtaskBeforeCursor");
             expect(body.messages[0].content).not.toContain("For subtaskBeforeCursor");
             expect(body.messages[0].content).not.toContain("同步测试结论");
@@ -883,6 +590,9 @@ describe("AI prompt contracts", () => {
                     recurrence: { trigger: "completion", cycle: "weekly", status: "active" }
                 },
                 siblingSubtasks: ["确认发布检查项", "同步测试结果"]
+            });
+            expect(JSON.parse(body.messages[1].content)).toMatchObject({
+                groundedContinuationHint: "验收标准"
             });
             expect(JSON.parse(body.messages[1].content)).toMatchObject({
                 currentCard: {
@@ -959,7 +669,7 @@ describe("AI prompt contracts", () => {
             const body = JSON.parse(String(init.body)) as { messages: [{ role: string; content: string }, { role: string; content: string }] };
             expect(body.messages[0].content).toContain("natural teammate tone");
             expect(body.messages[0].content).toContain("Do not auto-resolve, promise work");
-            expect(JSON.parse(body.messages[1].content)).toMatchObject({ scenario: "comment", commentMode: "status", recentComments: ["昨天已经同步初稿"] });
+            expect(JSON.parse(body.messages[1].content)).toMatchObject({ scenario: "comment", commentBeforeCursor: "进展 ", commentMode: "status", recentComments: ["昨天已经同步初稿"] });
             return new Response(JSON.stringify({ message: { content: '{"insert":"今天补齐结论。"}' } }), { status: 200 });
         }));
 
@@ -970,6 +680,48 @@ describe("AI prompt contracts", () => {
             maxChars: 20,
             context: { currentCard: testCard({ comments: [{ id: "comment-1", body: "昨天已经同步初稿", createdAt: 1, updatedAt: 1 }] }), relatedCards: [], boardLabels: [] }
         })).resolves.toEqual({ suggestion: "今天补齐结论。" });
+    });
+
+    it("keeps numbered-list peer context local for partial list items", async () => {
+        const { settings, suggestions } = createAiServices();
+        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
+        vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+            const body = JSON.parse(String(init.body)) as { messages: [{ role: string; content: string }, { role: string; content: string }] };
+            expect(body.messages[0].content).toContain("current fragment");
+            expect(body.messages[0].content).toContain("current marker or label");
+            expect(JSON.parse(body.messages[1].content)).toMatchObject({
+                scenario: "description",
+                markdownMode: "numbered-list",
+                textBeforeCursor: "3. 构建",
+                currentListItemText: "构建",
+                groundedContinuationHint: "趋势交易信号流程",
+                continuationStyleHint: "Continue the current numbered-list item after the existing prefix with a short peer fragment; do not repeat the typed prefix, the item number, or earlier paragraphs/headings.",
+                recentNonEmptyLines: [
+                    "1. 1w、2w同向方向一致才是方向一致",
+                    "2.关注小级别趋势"
+                ],
+                previousListItems: [
+                    "1w、2w同向方向一致才是方向一致",
+                    "关注小级别趋势"
+                ]
+            });
+            return new Response(JSON.stringify({ message: { content: '{"insert":"构建交易信号回测流程"}' } }), { status: 200 });
+        }));
+
+        await expect(suggestions.suggestText({
+            field: "description",
+            textBeforeCursor: "先整理出流程文章，然后再思考怎么弄成agent定时执行\n\n## 优化趋势交易信号\n\n1. 1w、2w同向方向一致才是方向一致\n2.关注小级别趋势\n3. 构建",
+            textAfterCursor: "",
+            maxChars: 16,
+            context: {
+                currentCard: testCard({
+                    title: "趋势交易的agent",
+                    descriptionText: "先整理出流程文章，然后再思考怎么弄成agent定时执行\n\n## 优化趋势交易信号\n\n1. 1w、2w同向方向一致才是方向一致\n2.关注小级别趋势\n3. 构建"
+                }),
+                relatedCards: [],
+                boardLabels: []
+            }
+        })).resolves.toEqual({ suggestion: "交易信号回测流程" });
     });
 });
 
@@ -1004,34 +756,8 @@ describe("AI completion quality benchmarks", () => {
                 expected: { suggestion: "验收标准" },
                 assertPrompt: (body) => {
                     expect(body.messages[0].content).toContain("subtask title");
-                    expect(body.messages[0].content).toContain("short actionable fragment");
+                    expect(body.messages[0].content).toContain("shortest missing action or object phrase");
                     expect(JSON.parse(body.messages[1].content)).toMatchObject({ scenario: "subtask", subtaskBeforeCursor: "补齐" });
-                }
-            },
-            {
-                name: "description rejects a repeated requirement list item",
-                input: {
-                    field: "description",
-                    textBeforeCursor: "覆盖范围：需要分析持有标的的仓位、盈亏和风险点\n1.需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式。\n2.",
-                    textAfterCursor: "",
-                    maxChars: 50,
-                    context: { relatedCards: [], boardLabels: [] }
-                },
-                modelContent: '{"insert":"需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式。"}',
-                expected: {},
-                assertPrompt: (body) => {
-                    expect(body.messages[0].content).toContain("never duplicate or paraphrase previousListItems");
-                    expect(body.messages[0].content).toContain("blockedInsertions");
-                    expect(body.messages[0].content).toContain("bare next numbered item after an existing requirement checklist");
-                    expect(body.messages[0].content).not.toContain("需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式");
-                    expect(JSON.parse(body.messages[1].content)).toMatchObject({
-                        scenario: "description",
-                        markdownMode: "numbered-list",
-                        blockedInsertions: [
-                            "覆盖范围：需要分析持有标的的仓位、盈亏和风险点",
-                            "需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式。"
-                        ]
-                    });
                 }
             },
             {

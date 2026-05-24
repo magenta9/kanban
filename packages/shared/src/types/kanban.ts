@@ -202,6 +202,8 @@ export interface AiLogEntry {
     message: string;
     statusCode?: number;
     durationMs?: number;
+    promptChars?: number;
+    outputChars?: number;
 }
 
 export interface AiLogPrompt {

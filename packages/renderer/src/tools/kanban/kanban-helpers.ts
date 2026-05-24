@@ -27,7 +27,8 @@ export function draftCardsForAiContext(columnId: string, cards: KanbanCard[]): K
 }
 
 export function shouldRequestInlineCompletion(textBeforeCursor: string, textAfterCursor: string, minChars: number, focused: boolean): boolean {
-    return focused && textAfterCursor.length === 0 && textBeforeCursor.trim().length >= minChars;
+    const currentLineBeforeCursor = textBeforeCursor.slice(textBeforeCursor.lastIndexOf("\n") + 1);
+    return focused && currentLineBeforeCursor.trim().length >= minChars;
 }
 
 export function shouldApplyInlineCompletion(requestedCursor: { before: string; after: string }, liveCursor: { before: string; after: string }, minChars: number, focused: boolean): boolean {

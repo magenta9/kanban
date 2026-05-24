@@ -1485,7 +1485,7 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
             subtasks: card.subtasks,
             comments: card.comments
         });
-    }, [card.id, card.updatedAt]);
+    }, [card.id]);
 
     useEffect(() => {
         setSubtaskDraft("");
@@ -2021,9 +2021,10 @@ function useInlineCompletion<TElement extends HTMLInputElement | HTMLTextAreaEle
 
     function currentCursor(): CursorText {
         const element = elementRef.current;
-        const start = element?.selectionStart ?? value.length;
+        const currentValue = element?.value ?? value;
+        const start = element?.selectionStart ?? currentValue.length;
         const end = element?.selectionEnd ?? start;
-        return { before: value.slice(0, start), after: value.slice(end) };
+        return { before: currentValue.slice(0, start), after: currentValue.slice(end) };
     }
 
     function refreshCursor(): void {
@@ -2054,11 +2055,17 @@ function useInlineCompletion<TElement extends HTMLInputElement | HTMLTextAreaEle
 
     function acceptSuggestion(): string | null {
         if (!suggestion) return null;
-        const nextValue = `${cursor.before}${suggestion}${cursor.after}`;
+        const liveCursor = currentCursor();
+        if (!shouldApplyInlineCompletion(cursor, liveCursor, minChars, focused)) {
+            setSuggestion("");
+            requestIdRef.current += 1;
+            return null;
+        }
+        const nextValue = `${liveCursor.before}${suggestion}${liveCursor.after}`;
         setSuggestion("");
         requestIdRef.current += 1;
         window.requestAnimationFrame(() => {
-            const nextPosition = cursor.before.length + suggestion.length;
+            const nextPosition = liveCursor.before.length + suggestion.length;
             elementRef.current?.setSelectionRange(nextPosition, nextPosition);
         });
         return nextValue;

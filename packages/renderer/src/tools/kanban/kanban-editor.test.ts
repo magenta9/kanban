@@ -204,15 +204,23 @@ describe("inline completion focus guard", () => {
         expect(shouldRequestInlineCompletion("复盘持有标的", "", 2, false)).toBe(false);
     });
 
-    it("requests suggestions only when focused at the end and over the minimum length", () => {
+    it("requests suggestions only when the focused current-line prefix is long enough", () => {
         expect(shouldRequestInlineCompletion("复盘", "", 2, true)).toBe(true);
-        expect(shouldRequestInlineCompletion("复盘", "持有标的", 2, true)).toBe(false);
+        expect(shouldRequestInlineCompletion("复盘", "持有标的", 2, true)).toBe(true);
         expect(shouldRequestInlineCompletion(" ", "", 2, true)).toBe(false);
+        expect(shouldRequestInlineCompletion("先整理出流程文章，然后再思考怎么弄成agent定时执行\n", "", 5, true)).toBe(false);
+        expect(shouldRequestInlineCompletion("先整理出流程文章，然后再思考怎么弄成agent定时执行\n如果", "", 5, true)).toBe(false);
+    });
+
+    it("requests suggestions from the middle of a line when the local prefix is long enough", () => {
+        expect(shouldRequestInlineCompletion("需要分析持有", "标的的风险点", 5, true)).toBe(true);
+        expect(shouldRequestInlineCompletion("上一行内容\n", "后续内容", 5, true)).toBe(false);
     });
 
     it("does not apply stale suggestions after the cursor moves", () => {
         expect(shouldApplyInlineCompletion({ before: "复盘持有标的", after: "" }, { before: "复盘", after: "持有标的" }, 2, true)).toBe(false);
         expect(shouldApplyInlineCompletion({ before: "复盘持有标的", after: "" }, { before: "复盘持有标的", after: "" }, 2, true)).toBe(true);
+        expect(shouldApplyInlineCompletion({ before: "需要分析持有", after: "标的" }, { before: "需要分析持有", after: "标的" }, 5, true)).toBe(true);
     });
 
     it("accepts inline suggestions with Tab only", () => {

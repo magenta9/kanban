@@ -1,5 +1,5 @@
 import type { AiLabelSuggestion, AiLabelSuggestionInput, AiLabelSuggestionResult, AiLogPrompt, AiTextSuggestionField, AiTextSuggestionInput, AiTextSuggestionResult } from "@kanban/shared";
-import { blockedDescriptionInsertions, buildLabelMessages, buildTextPromptInput, buildTextSystemPrompt, labelSuggestionOutputSchema, localCursorLine, normalizeLabelName as normalizeContractLabelName, previousListItems, textMaxTokens, textSuggestionOutputSchema } from "./suggestion-contract";
+import { buildLabelMessages, buildTextPromptInput, buildTextSystemPrompt, labelSuggestionOutputSchema, normalizeLabelName as normalizeContractLabelName, textMaxTokens, textSuggestionOutputSchema } from "./suggestion-contract";
 import { chatCompletionHeaders, ollamaChatBody, ollamaChatUrl, responseErrorDetail, type AiSettingsService } from "./settings-service";
 
 interface OllamaChatResponse {
@@ -39,9 +39,10 @@ export class AiSuggestionService {
             { role: "user", content: JSON.stringify(promptInput) }
         ];
         const prompt = logPrompt(messages);
+        const promptChars = promptCharCount(messages);
         const emptyReason = requestedEmptyCompletionReason(promptInput);
         if (emptyReason) {
-            this.settings.recordEvent({ level: "info", scope, scenario, event: "skipped", prompt, message: `AI text suggestion skipped: ${emptyReason}.`, durationMs: Date.now() - startedAt });
+            this.settings.recordEvent({ level: "info", scope, scenario, event: "skipped", prompt, message: `AI text suggestion skipped: ${emptyReason}.`, durationMs: Date.now() - startedAt, promptChars });
             return {};
         }
         try {
@@ -54,25 +55,25 @@ export class AiSuggestionService {
             });
             const durationMs = Date.now() - startedAt;
             const content = result.content;
-            const resolved = resolveTextSuggestion(content, promptInput, input);
-            const { normalized, suggestion, finalSuggestion, usedFallback, usedShortened } = resolved;
-            if (finalSuggestion) {
+            const { normalized, suggestion } = resolveTextSuggestion(content, input);
+            if (suggestion) {
                 this.settings.recordEvent({
                     level: "info",
                     scope,
                     scenario,
                     event: "success",
-                    prompt,
-                    message: `AI text suggestion completed: ${[...finalSuggestion].length} characters${usedFallback ? " (grounded hint fallback)" : usedShortened ? " (shortened to fit limit)" : ""}.`,
+                    message: `AI text suggestion completed: ${[...suggestion].length} characters.`,
                     statusCode: result.statusCode,
-                    durationMs
+                    durationMs,
+                    promptChars,
+                    outputChars: textCharCount(content)
                 });
-                return { suggestion: finalSuggestion };
+                return { suggestion };
             }
-            this.settings.recordEvent({ level: "warn", scope, scenario, event: "discarded", prompt, message: textSuggestionDiscardMessage(content, normalized, suggestion, input), statusCode: result.statusCode, durationMs });
+            this.settings.recordEvent({ level: "warn", scope, scenario, event: "discarded", prompt, message: textSuggestionDiscardMessage(content, normalized, suggestion), statusCode: result.statusCode, durationMs, promptChars, outputChars: textCharCount(content) });
         }
         catch (caught) {
-            this.settings.recordError({ scope, scenario, event: "error", prompt, message: errorMessage(caught), ...errorStatusCode(caught), durationMs: Date.now() - startedAt });
+            this.settings.recordError({ scope, scenario, event: "error", prompt, message: errorMessage(caught), ...errorStatusCode(caught), durationMs: Date.now() - startedAt, promptChars });
             return {};
         }
         return {};
@@ -90,6 +91,7 @@ export class AiSuggestionService {
         const startedAt = Date.now();
         const messages = buildLabelMessages(input);
         const prompt = logPrompt(messages);
+        const promptChars = promptCharCount(messages);
         try {
             const result = await this.complete({
                 baseUrl: state.baseUrl,
@@ -106,15 +108,16 @@ export class AiSuggestionService {
                 scope,
                 scenario,
                 event: suggestions.length > 0 ? "success" : "empty",
-                prompt,
                 message: `AI tag autocomplete completed: ${suggestions.length} usable suggestions.`,
                 statusCode: result.statusCode,
-                durationMs
+                durationMs,
+                promptChars,
+                outputChars: textCharCount(result.content)
             });
             return { suggestions };
         }
         catch (caught) {
-            this.settings.recordError({ scope, scenario, event: "error", prompt, message: errorMessage(caught), ...errorStatusCode(caught), durationMs: Date.now() - startedAt });
+            this.settings.recordError({ scope, scenario, event: "error", prompt, message: errorMessage(caught), ...errorStatusCode(caught), durationMs: Date.now() - startedAt, promptChars });
             return { suggestions: [] };
         }
     }
@@ -143,17 +146,6 @@ export class AiSuggestionService {
     }
 }
 
-export function isSuggestionWithinLimit(value: string, maxChars: number): boolean {
-    return value.length > 0 && [...value].length <= maxChars && /[\p{L}\p{N}]/u.test(value);
-}
-
-export function isUsableTextSuggestion(value: string, input: Pick<AiTextSuggestionInput, "field" | "maxChars"> & Partial<Pick<AiTextSuggestionInput, "textBeforeCursor">>): boolean {
-    if (!isSuggestionWithinLimit(value, input.maxChars)) return false;
-    if (input.field === "description" && input.textBeforeCursor && !isUsefulDescriptionInsertion(value, input.textBeforeCursor)) return false;
-    if (input.field === "comment" && input.textBeforeCursor && !isUsefulCommentInsertion(value, input.textBeforeCursor)) return false;
-    return true;
-}
-
 export function normalizeSuggestion(value: string): string {
     return stripFencedText(stripModelReasoning(value));
 }
@@ -166,31 +158,23 @@ export function normalizeTextSuggestion(value: string, _field?: AiTextSuggestion
     return typeof text === "string" ? text : "";
 }
 
-export function resolveTextSuggestion(raw: string, promptInput: object, input: AiTextSuggestionInput): {
+export function resolveTextSuggestion(raw: string, input: AiTextSuggestionInput): {
     normalized: string;
     suggestion: string;
-    finalSuggestion: string;
-    usedFallback: boolean;
-    usedShortened: boolean;
 } {
     const normalized = normalizeTextSuggestion(raw, input.field);
     const suggestion = normalizeInsertionSuggestion(normalized, input.textBeforeCursor, input.textAfterCursor);
-    const fallbackSuggestion = groundedHintFallback(promptInput, input);
-    const shortenedSuggestion = fallbackSuggestion ? "" : shortenSuggestionToFit(suggestion, input);
-    const preferGroundedHint = shouldPreferGroundedHint(suggestion, fallbackSuggestion, input);
-    const finalSuggestion = isUsableTextSuggestion(suggestion, input) && !preferGroundedHint ? suggestion : fallbackSuggestion || shortenedSuggestion;
     return {
         normalized,
-        suggestion,
-        finalSuggestion,
-        usedFallback: finalSuggestion === fallbackSuggestion && finalSuggestion !== suggestion,
-        usedShortened: finalSuggestion === shortenedSuggestion && finalSuggestion !== suggestion
+        suggestion
     };
 }
 
 export function normalizeInsertionSuggestion(value: string, textBeforeCursor: string, textAfterCursor: string): string {
     const withoutLeadingOverlap = stripLeadingOverlap(value.trim(), textBeforeCursor);
-    return stripTrailingOverlap(withoutLeadingOverlap, textAfterCursor).trim();
+    const withoutTrailingOverlap = stripTrailingOverlap(withoutLeadingOverlap, textAfterCursor);
+    const withoutTrailingDuplicate = stripTrailingDuplicateSuffixLine(withoutTrailingOverlap, textAfterCursor);
+    return stripRepeatedNearbyInsertion(withoutTrailingDuplicate, textBeforeCursor, textAfterCursor).trim();
 }
 
 export function normalizeLabelSuggestions(raw: string, maxSuggestions: number, boardLabels: Array<{ id: string; name: string }>, attachedLabelIds: string[]): AiLabelSuggestion[] {
@@ -246,6 +230,14 @@ function logPrompt(messages: Array<{ role: string; content: string }>): AiLogPro
     return { messages };
 }
 
+function promptCharCount(messages: Array<{ role: string; content: string }>): number {
+    return textCharCount(JSON.stringify({ messages }));
+}
+
+function textCharCount(value: string): number {
+    return [...value].length;
+}
+
 function requestedEmptyCompletionReason(promptInput: object): string | undefined {
     const completionDecision = (promptInput as { completionDecision?: { returnEmpty?: boolean; reason?: unknown } }).completionDecision;
     if (!completionDecision?.returnEmpty) return undefined;
@@ -254,178 +246,17 @@ function requestedEmptyCompletionReason(promptInput: object): string | undefined
         : "local contract requested an empty completion";
 }
 
-function groundedHintFallback(promptInput: object, input: AiTextSuggestionInput): string {
-    const hint = (promptInput as { groundedContinuationHint?: unknown }).groundedContinuationHint;
-    if (typeof hint !== "string" || !hint.trim()) return "";
-    const suggestion = normalizeInsertionSuggestion(hint, input.textBeforeCursor, input.textAfterCursor);
-    return isUsableTextSuggestion(suggestion, input) ? suggestion : "";
-}
-
-function shouldPreferGroundedHint(suggestion: string, groundedHint: string, input: AiTextSuggestionInput): boolean {
-    if (!suggestion.trim() || !groundedHint.trim()) return false;
-
-    if (input.field === "comment") {
-        return shouldPreferGroundedCommentHint(suggestion, groundedHint, input.textBeforeCursor);
-    }
-
-    if (input.field !== "description") return false;
-
-    const localLine = localCursorLine(input.textBeforeCursor, input.textAfterCursor).before.trim();
-    const structuredMode = descriptionStructuredMode(input.textBeforeCursor, localLine);
-    if (structuredMode) {
-        return normalizeStructuredValue(suggestion) !== normalizeStructuredValue(groundedHint);
-    }
-
-    if (!/[、,，]/.test(groundedHint)) return false;
-    if (!/[的:：]$/.test(localLine)) return false;
-
-    const normalizedSuggestion = normalizeListItemMeaning(suggestion);
-    const normalizedHint = normalizeListItemMeaning(groundedHint);
-    if (!normalizedSuggestion || !normalizedHint.includes(normalizedSuggestion)) return false;
-    return [...suggestion.trim()].length <= 2 && [...groundedHint.trim()].length > [...suggestion.trim()].length;
-}
-
-function descriptionStructuredMode(textBeforeCursor: string, lineBeforeCursor: string): "table" | "code" | "" {
-    if ((textBeforeCursor.match(/```/g)?.length ?? 0) % 2 === 1) return "code";
-    if (lineBeforeCursor.includes("|")) return "table";
-    return "";
-}
-
-function normalizeStructuredValue(value: string): string {
-    return value.trim().replace(/\s+/g, "");
-}
-
-function shouldPreferGroundedCommentHint(suggestion: string, groundedHint: string, textBeforeCursor: string): boolean {
-    const localLine = localCursorLine(textBeforeCursor, "").before.trim();
-    if (/^结论(?:\s|$)/u.test(localLine)) return suggestion.trim() !== groundedHint.trim();
-    if (/^风险(?:\s|$)/u.test(localLine)) return suggestion.trim() !== groundedHint.trim();
-
-    const mode = localCommentMode(localLine);
-    if (mode === "action") {
-        if (/^(?:需|需要|待)\s*/u.test(suggestion.trim()) && groundedHint.trim() !== suggestion.trim()) return true;
-        if (groundedHint.includes("文档") && !suggestion.includes("文档") && groundedHint.trim() !== suggestion.trim()) return true;
-        return false;
-    }
-    if (mode === "status") {
-        if (/^(?:sync update|update|status)\b/i.test(localLine)) return groundedHint.trim() !== suggestion.trim();
-        if (/^今天(?:\s|$)/u.test(localLine)) return groundedHint.trim() !== suggestion.trim();
-        return /^已/u.test(suggestion.trim()) && groundedHint.trim() !== suggestion.trim();
-    }
-    if (mode === "reply") return [...suggestion.trim()].length <= 4 && [...groundedHint.trim()].length > [...suggestion.trim()].length;
-    return false;
-}
-
-function localCommentMode(localLine: string): "reply" | "status" | "action" | "note" {
-    const trimmed = localLine.trimStart().toLowerCase();
-    if (/^(reply|re:)\b/.test(trimmed) || trimmed.startsWith("回复")) return "reply";
-    if (/^(todo|action|next)\b/.test(trimmed) || trimmed.startsWith("下一步") || trimmed.startsWith("待办")) return "action";
-    if (/^(status|update|sync update)\b/.test(trimmed) || trimmed.startsWith("进展") || trimmed.startsWith("状态") || trimmed.startsWith("今天") || trimmed.startsWith("今日")) return "status";
-    return "note";
-}
-
-function shortenSuggestionToFit(value: string, input: AiTextSuggestionInput): string {
-    const trimmed = value.trim();
-    if (!trimmed) return "";
-    const candidates = [
-        ...trimmed.split(/\n+/),
-        ...trimmed.split(/[。.!?！？]/),
-        ...trimmed.split(/[，,、；;]/)
-    ].map((candidate) => candidate.trim()).filter(Boolean);
-    for (const candidate of candidates) {
-        if (candidate !== trimmed && isUsableTextSuggestion(candidate, input)) return candidate;
-    }
-
-    const sliced = [...trimmed].slice(0, input.maxChars).join("").trim();
-    return isUsableTextSuggestion(sliced, input) ? sliced : "";
-}
-
-function isRepeatedDescriptionListItem(value: string, textBeforeCursor: string): boolean {
-    const candidate = normalizeListItemMeaning(value);
-    if (candidate.length < 8) return false;
-    const localItem = normalizeListItemMeaning(localCursorLine(textBeforeCursor, "").before);
-    const previousItems = previousListItems(textBeforeCursor).map(normalizeListItemMeaning);
-    return [localItem, ...previousItems].some((item) => item.length >= 8 && (item === candidate || item.includes(candidate) || candidate.includes(item)));
-}
-
-function isUsefulDescriptionInsertion(value: string, textBeforeCursor: string): boolean {
-    const localLine = localCursorLine(textBeforeCursor, "").before.trim();
-    if (/^#{1,6}\s+\S+\s*$/.test(localLine)) return false;
-    if (!/^(?:[-*+]\s*|\d+[.)]\s*)$/.test(localLine) && /[。.!！?？]$/.test(localLine)) return false;
-    if (/^\d+[.)]\s*$/.test(localLine) && previousListContainsRequirementChecklist(textBeforeCursor)) return false;
-    if (/^[-*+]\s/.test(localLine) && /^[-*+]\s/.test(value.trimStart())) return false;
-    if (localLine.includes("|")) {
-        const rowLabel = localLine.split("|").map((cell) => cell.trim()).filter(Boolean)[0] ?? "";
-        if (rowLabel && normalizeListItemMeaning(value) === normalizeListItemMeaning(rowLabel)) return false;
-    }
-    if ((textBeforeCursor.match(/```/g)?.length ?? 0) % 2 === 1) {
-        const propertyMatch = localLine.match(/"([^"\\]+)"\s*:\s*$/);
-        if (propertyMatch?.[1] && normalizeListItemMeaning(value) === normalizeListItemMeaning(propertyMatch[1])) return false;
-    }
-    return !isRepeatedDescriptionListItem(value, textBeforeCursor) && !containsBlockedDescriptionInsertion(value, textBeforeCursor);
-}
-
-function containsBlockedDescriptionInsertion(value: string, textBeforeCursor: string): boolean {
-    const candidate = normalizeListItemMeaning(value);
-    if (candidate.length < 8) return false;
-    return blockedDescriptionInsertions(textBeforeCursor)
-        .map(normalizeListItemMeaning)
-        .some((blocked) => blocked.length >= 8 && (candidate === blocked || candidate.includes(blocked) || blocked.includes(candidate) || overlapsRequirementChecklist(candidate, blocked)));
-}
-
-function overlapsRequirementChecklist(candidate: string, blocked: string): boolean {
-    const checklistTerms = ["具体标的范围", "历史数据获取方式", "预期输出格式"];
-    const sharedTerms = checklistTerms.filter((term) => candidate.includes(term) && blocked.includes(term));
-    return sharedTerms.length >= 2;
-}
-
-function previousListContainsRequirementChecklist(textBeforeCursor: string): boolean {
-    return previousListItems(textBeforeCursor)
-        .map(normalizeListItemMeaning)
-        .some((item) => overlapsRequirementChecklist(item, item));
-}
-
-function normalizeListItemMeaning(value: string): string {
-    return value
-        .trim()
-        .replace(/^(?:[-*+]\s+|\d+[.)]\s*)/, "")
-        .replace(/^需要/, "")
-        .replace(/[\s，,。.!！?？、；;：:]/g, "");
-}
-
-function isAmbiguousCommentPrefix(textBeforeCursor: string): boolean {
-    const localLine = localCursorLine(textBeforeCursor, "").before.trim();
-    return /^(嗯|好|好的|收到|ok|okay)$/iu.test(localLine);
-}
-
-function isUsefulCommentInsertion(value: string, textBeforeCursor: string): boolean {
-    if (isAmbiguousCommentPrefix(textBeforeCursor)) return false;
-    const localLine = localCursorLine(textBeforeCursor, "").before.trim();
-    const trimmed = value.trim();
-    if (!trimmed) return false;
-    if (trimmed === localLine) return false;
-    if (/^(?:reply|re:|回复|status|update|sync update:)\s*$/iu.test(trimmed)) return false;
-    if (/^(?:reply|re:|回复|进展|状态|status|update|sync update:)/iu.test(localLine) && [...trimmed].length < 2) return false;
-    return true;
-}
-
 function textSuggestionScenario(field: AiTextSuggestionField): string {
     if (field === "description") return "inline-completion.description";
     if (field === "subtask") return "inline-completion.subtask";
     return "inline-completion.comment";
 }
 
-function textSuggestionDiscardMessage(raw: string, normalized: string, suggestion: string, input: AiTextSuggestionInput): string {
+function textSuggestionDiscardMessage(raw: string, normalized: string, suggestion: string): string {
     if (!raw.trim()) return "AI suggestion discarded: provider returned empty content.";
     if (!normalized.trim()) return "AI suggestion discarded: content only contained reasoning or formatting.";
     if (!suggestion.trim()) return "AI suggestion discarded: content repeated cursor context.";
-    if (!isSuggestionWithinLimit(suggestion, input.maxChars)) return `AI suggestion discarded: ${[...suggestion].length} characters exceeds ${input.maxChars}.`;
-    if (input.field === "description" && input.textBeforeCursor && !isUsefulDescriptionInsertion(suggestion, input.textBeforeCursor)) {
-        return "AI suggestion discarded: content conflicted with nearby description context.";
-    }
-    if (input.field === "comment" && input.textBeforeCursor && isAmbiguousCommentPrefix(input.textBeforeCursor)) {
-        return "AI suggestion discarded: comment prefix is too ambiguous for a grounded continuation.";
-    }
-    return "AI suggestion discarded: content failed local usefulness checks.";
+    return "AI suggestion discarded: content became empty after cursor-fit normalization.";
 }
 
 function stripModelReasoning(value: string): string {
@@ -462,11 +293,6 @@ function parseJsonObject(value: string): Record<string, unknown> | undefined {
     return undefined;
 }
 
-function looksLikeJsonOutput(value: string): boolean {
-    const trimmed = value.trim();
-    return trimmed.startsWith("{") || trimmed.startsWith("[");
-}
-
 function stripLeadingOverlap(value: string, textBeforeCursor: string): string {
     const maxOverlap = Math.min(value.length, textBeforeCursor.length);
     for (let length = maxOverlap; length > 0; length -= 1) {
@@ -481,6 +307,79 @@ function stripTrailingOverlap(value: string, textAfterCursor: string): string {
         if (textAfterCursor.startsWith(value.slice(value.length - length))) return value.slice(0, value.length - length);
     }
     return value;
+}
+
+function stripTrailingDuplicateSuffixLine(value: string, textAfterCursor: string): string {
+    if (!value.trim() || !textAfterCursor.trim()) return value;
+
+    const suggestionLines = value.split("\n");
+    const lastLineIndex = findLastNonEmptyLineIndex(suggestionLines);
+    if (lastLineIndex < 0) return value;
+
+    const suffixLines = textAfterCursor.split("\n");
+    const firstSuffixLine = suffixLines.find((line) => line.trim());
+    if (!firstSuffixLine) return value;
+
+    const suggestionLineKey = inlineLineKey(suggestionLines[lastLineIndex] ?? "");
+    const suffixLineKey = inlineLineKey(firstSuffixLine);
+    if (suggestionLineKey.length < 6 || suggestionLineKey !== suffixLineKey) return value;
+
+    suggestionLines.splice(lastLineIndex, 1);
+    while (suggestionLines.length > 0 && !suggestionLines[suggestionLines.length - 1]?.trim()) suggestionLines.pop();
+    return suggestionLines.join("\n");
+}
+
+function findLastNonEmptyLineIndex(lines: string[]): number {
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+        if (lines[index]?.trim()) return index;
+    }
+    return -1;
+}
+
+function inlineLineKey(value: string): string {
+    return value.trim().replace(/\s+/g, "").replace(/[。.!！?？]+$/u, "");
+}
+
+function stripRepeatedNearbyInsertion(value: string, textBeforeCursor: string, textAfterCursor: string): string {
+    const lines = value.split("\n");
+    if (lines.length > 1) return stripRepeatedNearbyLines(value, textBeforeCursor, textAfterCursor);
+
+    const key = inlineLineKey(value);
+    if (key.length < 6) return value;
+
+    return nearbyLineKeys(textBeforeCursor, textAfterCursor).has(key) ? "" : value;
+}
+
+function stripRepeatedNearbyLines(value: string, textBeforeCursor: string, textAfterCursor: string): string {
+    const lines = value.split("\n");
+    if (lines.length <= 1) return value;
+
+    const nearbyKeys = nearbyLineKeys(textBeforeCursor, textAfterCursor);
+    const seenLineKeys = new Set<string>();
+    const keptLines: string[] = [];
+
+    for (const line of lines) {
+        if (!line.trim()) {
+            if (keptLines.length > 0) keptLines.push(line);
+            continue;
+        }
+
+        const key = inlineLineKey(line);
+        if (key.length >= 4 && seenLineKeys.has(key)) break;
+        if (key.length >= 6 && nearbyKeys.has(key)) break;
+        keptLines.push(line);
+        if (key.length >= 4) seenLineKeys.add(key);
+    }
+
+    while (keptLines.length > 0 && !keptLines[keptLines.length - 1]?.trim()) keptLines.pop();
+    return keptLines.join("\n");
+}
+
+function nearbyLineKeys(textBeforeCursor: string, textAfterCursor: string): Set<string> {
+    return new Set([
+        ...textBeforeCursor.split("\n").map((line) => inlineLineKey(line)).filter((line) => line.length >= 6).slice(-6),
+        ...textAfterCursor.split("\n").map((line) => inlineLineKey(line)).filter((line) => line.length >= 6).slice(0, 2)
+    ]);
 }
 
 function errorMessage(error: unknown): string {

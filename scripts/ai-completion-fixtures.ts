@@ -98,6 +98,26 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
         }))
     },
     {
+        id: "description-numbered-item-fragment-no-paragraph-repeat",
+        field: "description",
+        dimensions: ["numbered-list-fragment", "heading-context", "paragraph-repeat-risk"],
+        textBeforeCursor: "先整理出流程文章，然后再思考怎么弄成agent定时执行\n\n## 优化趋势交易信号\n\n1. 1w、2w同向方向一致才是方向一致\n2.关注小级别趋势\n3. 构建",
+        textAfterCursor: "",
+        maxChars: 20,
+        expectedBehavior: "accept",
+        blockedInsertions: [
+            "先整理出流程文章，然后再思考怎么弄成agent定时执行",
+            "1w、2w同向方向一致才是方向一致",
+            "关注小级别趋势"
+        ],
+        idealInsertions: ["交易信号回测流程", "执行链路", "筛选与回测流程"],
+        expectedNotes: "Continue the current numbered item with a short peer fragment after '构建'; do not copy the opening paragraph or previous numbered items.",
+        context: context(card({
+            title: "趋势交易的agent",
+            descriptionText: "先整理出流程文章，然后再思考怎么弄成agent定时执行\n\n## 优化趋势交易信号\n\n1. 1w、2w同向方向一致才是方向一致\n2.关注小级别趋势\n3. 构建"
+        }))
+    },
+    {
         id: "subtask-prefix-fragment",
         field: "subtask",
         textBeforeCursor: "补齐",

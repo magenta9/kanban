@@ -161,10 +161,10 @@ async function evaluateFixture(options: CliOptions, fixture: AiCompletionFixture
             { role: "user", content: JSON.stringify(promptInput) }
         ];
     const raw = await chat(options.baseUrl, options.model, messages, generationTokens(fixture.field), 0.2, `${fixture.id}:${variant}`, textSuggestionOutputSchema);
-    const resolved = resolveTextSuggestion(raw, promptInput, input);
+    const resolved = resolveTextSuggestion(raw, input);
     const rawContractOk = Boolean(normalizeTextSuggestion(raw, fixture.field) || raw.includes('"insert"'));
-    const contractOk = rawContractOk || Boolean(resolved.finalSuggestion);
-    const insertion = resolved.finalSuggestion;
+    const contractOk = rawContractOk || Boolean(resolved.suggestion);
+    const insertion = resolved.suggestion;
     const diagnostics = collectDiagnostics(fixture, raw, insertion, contractOk, rawContractOk);
     const review = await reviewCompletion(options, fixture, variant, messages, raw, insertion, diagnostics);
     const weightedStars = weightedAverage(review.scores, reviewWeights);
