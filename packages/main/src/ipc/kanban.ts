@@ -40,6 +40,10 @@ export class KanbanHandlers {
         return this.kanban.updateColumn(input);
     }
 
+    setCompletionColumn(input: { boardId: string; columnId: string }): ReturnType<KanbanRepository["setCompletionColumn"]> {
+        return this.kanban.setCompletionColumn(input);
+    }
+
     reorderColumn(input: { id: string; beforeId?: string; afterId?: string }): ReturnType<KanbanRepository["reorderColumn"]> {
         return this.kanban.reorderColumn(input);
     }
@@ -94,6 +98,22 @@ export class KanbanHandlers {
 
     setCardLabels(input: { cardId: string; labelIds: string[] }): ReturnType<KanbanRepository["setCardLabels"]> {
         return this.kanban.setCardLabels(input);
+    }
+
+    enableCardRecurrence(input: Parameters<KanbanRepository["enableCardRecurrence"]>[0]): ReturnType<KanbanRepository["enableCardRecurrence"]> {
+        return this.kanban.enableCardRecurrence(input);
+    }
+
+    updateCardRecurrence(input: Parameters<KanbanRepository["updateCardRecurrence"]>[0]): ReturnType<KanbanRepository["updateCardRecurrence"]> {
+        return this.kanban.updateCardRecurrence(input);
+    }
+
+    disableCardRecurrence(input: Parameters<KanbanRepository["disableCardRecurrence"]>[0]): ReturnType<KanbanRepository["disableCardRecurrence"]> {
+        return this.kanban.disableCardRecurrence(input);
+    }
+
+    generateDueRecurrences(input?: Parameters<KanbanRepository["generateDueRecurrences"]>[0]): ReturnType<KanbanRepository["generateDueRecurrences"]> {
+        return this.kanban.generateDueRecurrences(input);
     }
 
     exportBoard(input: { boardId: string }): ReturnType<KanbanRepository["exportBoard"]> {

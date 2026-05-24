@@ -1,7 +1,16 @@
 export const ipcChannels = {
   system: {
     getStatus: "system:get-status",
-    showKeyboardShortcuts: "system:show-keyboard-shortcuts"
+    showKeyboardShortcuts: "system:show-keyboard-shortcuts",
+    showAiSettings: "system:show-ai-settings"
+  },
+  ai: {
+    getSettings: "ai:get-settings",
+    saveSettings: "ai:save-settings",
+    testConnection: "ai:test-connection",
+    openLogFile: "ai:open-log-file",
+    suggestText: "ai:suggest-text",
+    suggestLabels: "ai:suggest-labels"
   },
   kanban: {
     listBoards: "kanban:list-boards",
@@ -11,6 +20,7 @@ export const ipcChannels = {
     listColumns: "kanban:list-columns",
     createColumn: "kanban:create-column",
     updateColumn: "kanban:update-column",
+    setCompletionColumn: "kanban:set-completion-column",
     reorderColumn: "kanban:reorder-column",
     archiveColumn: "kanban:archive-column",
     restoreColumn: "kanban:restore-column",
@@ -25,6 +35,10 @@ export const ipcChannels = {
     createLabel: "kanban:create-label",
     deleteLabel: "kanban:delete-label",
     setCardLabels: "kanban:set-card-labels",
+    enableCardRecurrence: "kanban:enable-card-recurrence",
+    updateCardRecurrence: "kanban:update-card-recurrence",
+    disableCardRecurrence: "kanban:disable-card-recurrence",
+    generateDueRecurrences: "kanban:generate-due-recurrences",
     exportBoard: "kanban:export-board",
     importBoard: "kanban:import-board"
   }

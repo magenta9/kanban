@@ -21,6 +21,17 @@ describe("KanbanRepository", () => {
             "In Progress",
             "Done"
         ]);
+        expect(repository.listBoards()[0]?.completionColumnId).toBe(repository.listColumns({ boardId: board.id }).at(-1)?.id);
+    });
+
+    it("sets the board completion column", () => {
+        const repository = createRepository();
+        const board = repository.createBoard({ name: "Launch" });
+        const [backlog] = repository.listColumns({ boardId: board.id });
+
+        const updated = repository.setCompletionColumn({ boardId: board.id, columnId: backlog!.id });
+
+        expect(updated.completionColumnId).toBe(backlog!.id);
     });
 
     it("moves cards across columns with fractional ordering", () => {
@@ -60,7 +71,7 @@ describe("KanbanRepository", () => {
         expect(repository.listCards({ boardId: board.id })).toHaveLength(1);
     });
 
-    it("persists card subtasks and comments", () => {
+    it("persists card markdown descriptions, subtasks, and comments", () => {
         const repository = createRepository();
         const board = repository.createBoard({ name: "Launch" });
         const [backlog] = repository.listColumns({ boardId: board.id });
@@ -69,11 +80,14 @@ describe("KanbanRepository", () => {
         const updated = repository.updateCard({
             id: card.id,
             patch: {
+                descriptionMarkdown: "## Scope\n\n- Ship [notes](https://example.com)",
                 subtasks: [{ id: "subtask-1", title: "Write notes", completed: false, createdAt: 1, updatedAt: 1 }],
                 comments: [{ id: "comment-1", body: "Looks ready", createdAt: 2, updatedAt: 2 }]
             }
         });
 
+        expect(updated.descriptionMarkdown).toBe("## Scope\n\n- Ship [notes](https://example.com)");
+        expect(updated.descriptionText).toBe("Scope\nShip notes");
         expect(updated.subtasks[0]?.title).toBe("Write notes");
         expect(repository.listCards({ boardId: board.id })[0]?.comments[0]?.body).toBe("Looks ready");
     });
@@ -129,6 +143,93 @@ describe("KanbanRepository", () => {
         expect(repository.listLabels({ boardId: imported.id })[0]?.name).toBe("UI");
     });
 
+    it("creates the next occurrence when the recurring card reaches the completion column", () => {
+        const repository = createRepository();
+        const board = repository.createBoard({ name: "Habits" });
+        const [backlog, , , done] = repository.listColumns({ boardId: board.id });
+        const card = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Review notes" });
+        repository.updateCard({
+            id: card.id,
+            patch: {
+                startDate: date(2026, 4, 22),
+                endDate: date(2026, 4, 22),
+                subtasks: [{ id: "subtask-1", title: "Read", completed: true, createdAt: 1, updatedAt: 1 }]
+            }
+        });
+        repository.enableCardRecurrence({ cardId: card.id, trigger: "completion", cycle: "daily" });
+
+        repository.updateCard({ id: card.id, patch: { columnId: done!.id } });
+
+        const cards = repository.listCards({ boardId: board.id });
+        const originalCard = cards.find((item) => item.id === card.id);
+        const nextCard = cards.find((item) => item.id !== card.id);
+        expect(cards).toHaveLength(2);
+        expect(originalCard?.recurrence).toBeUndefined();
+        expect(nextCard).toMatchObject({ title: "Review notes", columnId: backlog!.id });
+        expect(nextCard?.recurrence).toMatchObject({ trigger: "completion", cycle: "daily", status: "active" });
+        expect(nextCard?.subtasks[0]).toMatchObject({ title: "Read", completed: false });
+    });
+
+    it("generates only the latest seven missed fixed-time occurrences", () => {
+        const repository = createRepository();
+        const board = repository.createBoard({ name: "Habits" });
+        const [backlog] = repository.listColumns({ boardId: board.id });
+        const card = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Daily log" });
+        repository.updateCard({ id: card.id, patch: { startDate: date(2026, 0, 1), endDate: date(2026, 0, 1) } });
+        repository.enableCardRecurrence({ cardId: card.id, trigger: "fixed", cycle: "daily" });
+
+        repository.generateDueRecurrences({ now: new Date(2026, 0, 12, 9).getTime() });
+
+        const cards = repository.listCards({ boardId: board.id });
+        expect(cards).toHaveLength(8);
+        expect(cards.filter((item) => item.recurrence)).toHaveLength(1);
+        expect(cards.some((item) => item.startDate === date(2026, 0, 2))).toBe(false);
+        expect(cards.some((item) => item.startDate === date(2026, 0, 12))).toBe(true);
+    });
+
+    it("stops recurrence when the baton card is archived", () => {
+        const repository = createRepository();
+        const board = repository.createBoard({ name: "Habits" });
+        const [backlog] = repository.listColumns({ boardId: board.id });
+        const card = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Daily log" });
+        repository.enableCardRecurrence({ cardId: card.id, trigger: "fixed", cycle: "daily" });
+
+        repository.archiveCard({ id: card.id });
+
+        expect(repository.listCards({ boardId: board.id, includeArchived: true })[0]?.recurrence).toBeUndefined();
+        repository.generateDueRecurrences({ now: new Date(2026, 0, 12, 9).getTime() });
+        expect(repository.listCards({ boardId: board.id, includeArchived: true })).toHaveLength(1);
+    });
+
+    it("stops recurrence when it is disabled from the baton card", () => {
+        const repository = createRepository();
+        const board = repository.createBoard({ name: "Habits" });
+        const [backlog] = repository.listColumns({ boardId: board.id });
+        const card = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Daily log" });
+        repository.enableCardRecurrence({ cardId: card.id, trigger: "fixed", cycle: "daily" });
+
+        const updated = repository.disableCardRecurrence({ cardId: card.id });
+
+        expect(updated.recurrence).toBeUndefined();
+        repository.generateDueRecurrences({ now: new Date(2026, 0, 12, 9).getTime() });
+        expect(repository.listCards({ boardId: board.id, includeArchived: true })).toHaveLength(1);
+    });
+
+    it("keeps monthly fixed recurrence anchored to the original day", () => {
+        const repository = createRepository();
+        const board = repository.createBoard({ name: "Finance" });
+        const [backlog] = repository.listColumns({ boardId: board.id });
+        const card = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Close books" });
+        repository.updateCard({ id: card.id, patch: { startDate: date(2026, 0, 31), endDate: date(2026, 0, 31) } });
+        repository.enableCardRecurrence({ cardId: card.id, trigger: "fixed", cycle: "monthly" });
+
+        repository.generateDueRecurrences({ now: new Date(2026, 2, 31, 9).getTime() });
+
+        const dates = repository.listCards({ boardId: board.id }).map((item) => item.startDate).sort();
+        expect(dates).toContain(date(2026, 1, 28));
+        expect(dates).toContain(date(2026, 2, 31));
+    });
+
     it("backfills legacy due dates as single-day ranges", () => {
         const database = new Database(":memory:");
         database.exec(`
@@ -180,3 +281,7 @@ describe("KanbanRepository", () => {
         });
     });
 });
+
+function date(year: number, month: number, day: number): number {
+    return new Date(year, month, day).getTime();
+}

@@ -1,15 +1,19 @@
-import { app, ipcMain } from "electron";
+import { app, ipcMain, shell } from "electron";
 import { ipcChannels } from "@kanban/shared";
 import type { KanbanRepository } from "../db/repositories/kanban-repository";
+import type { AiSettingsService } from "../ai/settings-service";
+import { AiSuggestionService } from "../ai/suggestion-service";
 import { KanbanHandlers } from "./kanban";
 import { bindInvoke } from "./contract-binder";
 
 export interface IpcServiceContext {
   kanban: KanbanRepository;
+  ai: AiSettingsService;
 }
 
 export function registerIpc(context: IpcServiceContext): void {
   const kanban = new KanbanHandlers(context.kanban);
+  const suggestions = new AiSuggestionService(context.ai);
 
   bindInvoke(ipcMain, ipcChannels.system.getStatus, () => ({
     appName: "Kanban" as const,
@@ -18,6 +22,15 @@ export function registerIpc(context: IpcServiceContext): void {
     userDataPath: app.getPath("userData")
   }));
 
+  bindInvoke(ipcMain, ipcChannels.ai.getSettings, () => context.ai.getSettings());
+  bindInvoke(ipcMain, ipcChannels.ai.saveSettings, (input) => context.ai.saveSettings(input));
+  bindInvoke(ipcMain, ipcChannels.ai.testConnection, () => context.ai.testConnection());
+  bindInvoke(ipcMain, ipcChannels.ai.openLogFile, async () => {
+    await shell.openPath(context.ai.ensureLogFile());
+  });
+  bindInvoke(ipcMain, ipcChannels.ai.suggestText, (input) => suggestions.suggestText(input));
+  bindInvoke(ipcMain, ipcChannels.ai.suggestLabels, (input) => suggestions.suggestLabels(input));
+
   bindInvoke(ipcMain, ipcChannels.kanban.listBoards, () => kanban.listBoards());
   bindInvoke(ipcMain, ipcChannels.kanban.createBoard, (input) => kanban.createBoard(input));
   bindInvoke(ipcMain, ipcChannels.kanban.renameBoard, (input) => kanban.renameBoard(input));
@@ -25,6 +38,7 @@ export function registerIpc(context: IpcServiceContext): void {
   bindInvoke(ipcMain, ipcChannels.kanban.listColumns, (input) => kanban.listColumns(input));
   bindInvoke(ipcMain, ipcChannels.kanban.createColumn, (input) => kanban.createColumn(input));
   bindInvoke(ipcMain, ipcChannels.kanban.updateColumn, (input) => kanban.updateColumn(input));
+  bindInvoke(ipcMain, ipcChannels.kanban.setCompletionColumn, (input) => kanban.setCompletionColumn(input));
   bindInvoke(ipcMain, ipcChannels.kanban.reorderColumn, (input) => kanban.reorderColumn(input));
   bindInvoke(ipcMain, ipcChannels.kanban.archiveColumn, (input) => kanban.archiveColumn(input));
   bindInvoke(ipcMain, ipcChannels.kanban.restoreColumn, (input) => kanban.restoreColumn(input));
@@ -39,6 +53,10 @@ export function registerIpc(context: IpcServiceContext): void {
   bindInvoke(ipcMain, ipcChannels.kanban.createLabel, (input) => kanban.createLabel(input));
   bindInvoke(ipcMain, ipcChannels.kanban.deleteLabel, (input) => kanban.deleteLabel(input));
   bindInvoke(ipcMain, ipcChannels.kanban.setCardLabels, (input) => kanban.setCardLabels(input));
+  bindInvoke(ipcMain, ipcChannels.kanban.enableCardRecurrence, (input) => kanban.enableCardRecurrence(input));
+  bindInvoke(ipcMain, ipcChannels.kanban.updateCardRecurrence, (input) => kanban.updateCardRecurrence(input));
+  bindInvoke(ipcMain, ipcChannels.kanban.disableCardRecurrence, (input) => kanban.disableCardRecurrence(input));
+  bindInvoke(ipcMain, ipcChannels.kanban.generateDueRecurrences, (input) => kanban.generateDueRecurrences(input));
   bindInvoke(ipcMain, ipcChannels.kanban.exportBoard, (input) => kanban.exportBoard(input));
   bindInvoke(ipcMain, ipcChannels.kanban.importBoard, (input) => kanban.importBoard(input));
 }

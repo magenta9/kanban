@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
 import {
     closestCenter,
     DragOverlay,
@@ -16,10 +16,15 @@ import { CSS } from "@dnd-kit/utilities";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import type { Editor, JSONContent } from "@tiptap/react";
-import type { KanbanBoard, KanbanCard, KanbanCardPatch, KanbanColumn, KanbanComment, KanbanLabel, KanbanPriority, KanbanRichTextDocument, KanbanSubtask } from "@kanban/shared";
+import ReactMarkdown from "react-markdown";
+import { markdownToPlainText } from "@kanban/shared";
+import type { AiLabelSuggestion, AiSettingsState, AiSuggestionCardContext, AiTestConnectionResult, AiTextSuggestionField, KanbanBoard, KanbanCard, KanbanCardPatch, KanbanColumn, KanbanComment, KanbanLabel, KanbanPriority, KanbanRecurrenceCycle, KanbanRecurrenceTrigger, KanbanRichTextDocument, KanbanSubtask } from "@kanban/shared";
 import {
     Archive,
+    AlertTriangle,
+    ArrowRight,
     CalendarDays,
+    Check,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
@@ -30,8 +35,10 @@ import {
     KanbanSquare,
     List,
     Menu,
+    MoreHorizontal,
     Pencil,
     Plus,
+    Repeat2,
     RotateCcw,
     Tag,
     Trash2,
@@ -39,25 +46,39 @@ import {
 } from "lucide-react";
 import { getApi } from "../../api";
 import { IconButton, SegmentedControl } from "../../components/tool-layout";
+import {
+    applyRichTextListContinuation,
+    applyRichTextListIndentation,
+    draftCardsForAiContext,
+    findRichTextMarkdownLinkSuffix,
+    formatDateRange,
+    isEditableShortcutTarget,
+    isMarkdownSubmitShortcut,
+    isRichTextListActive,
+    isRichTextListContinuationShortcut,
+    isRichTextListIndentShortcut,
+    isRichTextSubmitShortcut,
+    keyboardShortcutFromEvent,
+    normalizeDateRange,
+    recurrenceSummary,
+    relatedCardsForAiContext,
+    resolveRichTextLinkPaste,
+    shouldApplyInlineCompletion,
+    shouldRequestInlineCompletion,
+    shouldSyncRichTextEditorContent,
+    stableLabelColor,
+    suggestBoardLabelsByPrefix
+} from "./kanban-helpers";
 
 type ViewMode = "kanban" | "list" | "archive";
 
-type KeyboardShortcutAction =
-    | { type: "openHelp" }
-    | { type: "close" }
-    | { type: "toggleBoardList" }
-    | { type: "createCard" }
-    | { type: "createColumn" }
-    | { type: "setView"; view: ViewMode }
-    | { type: "selectBoardByIndex"; index: number };
-
-type ShortcutEvent = Pick<KeyboardEvent, "key" | "metaKey" | "shiftKey" | "altKey">;
-type RichTextSubmitShortcutEvent = Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing">;
-type RichTextListContinuationShortcutEvent = Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing">;
 type RichTextSubmitHandler = (json: KanbanRichTextDocument, text: string) => void;
-type RichTextListCommandEditor = Pick<Editor, "isActive"> & {
-    commands: Pick<Editor["commands"], "splitListItem" | "liftListItem">;
-};
+
+interface RichTextLinkInsertTarget {
+    label: string;
+    url: string;
+    selectLabel: boolean;
+}
 
 interface SelectOption {
     value: string;
@@ -86,9 +107,15 @@ interface CardDropTarget {
     afterId?: string;
 }
 
+interface CursorText {
+    before: string;
+    after: string;
+}
+
 const priorities: KanbanPriority[] = ["none", "low", "medium", "high", "urgent"];
+const recurrenceCycles: KanbanRecurrenceCycle[] = ["daily", "weekly", "monthly"];
+const recurrenceTriggers: KanbanRecurrenceTrigger[] = ["fixed", "completion"];
 const weekdaysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const emptyRichTextDocument = { type: "doc", content: [{ type: "paragraph" }] } as KanbanRichTextDocument;
 const keyboardShortcutGroups = [
     {
         title: "Boards",
@@ -146,6 +173,7 @@ export function KanbanPage(): JSX.Element {
     const [cardDropTarget, setCardDropTarget] = useState<CardDropTarget | null>(null);
     const [boardListCollapsed, setBoardListCollapsed] = useState(false);
     const [helpOpen, setHelpOpen] = useState(false);
+    const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
     const composerInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
     const sensors = useSensors(
@@ -197,6 +225,7 @@ export function KanbanPage(): JSX.Element {
     }, []);
 
     useEffect(() => getApi().system.onShowKeyboardShortcuts(() => setHelpOpen(true)), []);
+    useEffect(() => getApi().system.onShowAiSettings(() => setAiSettingsOpen(true)), []);
 
     async function selectBoard(boardId: string): Promise<void> {
         setSelectedBoardId(boardId);
@@ -274,6 +303,17 @@ export function KanbanPage(): JSX.Element {
         }
     }
 
+    async function setCompletionColumn(column: KanbanColumn): Promise<void> {
+        try {
+            await getApi().kanban.setCompletionColumn({ boardId: column.boardId, columnId: column.id });
+            await loadBoards();
+            await loadBoardData(column.boardId);
+            setError(null);
+        } catch (caught) {
+            setError(errorMessage(caught));
+        }
+    }
+
     function setDraftCardTitle(columnId: string, value: string): void {
         setDraftCardTitles((current) => ({ ...current, [columnId]: value }));
     }
@@ -319,6 +359,7 @@ export function KanbanPage(): JSX.Element {
         const nextPatch: Partial<KanbanCardPatch> = {
             title: patch.title,
             columnId: patch.columnId,
+            descriptionMarkdown: patch.descriptionMarkdown,
             descriptionJson: patch.descriptionJson,
             descriptionText: patch.descriptionText,
             priority: patch.priority,
@@ -329,6 +370,25 @@ export function KanbanPage(): JSX.Element {
         if (Object.prototype.hasOwnProperty.call(patch, "startDate")) nextPatch.startDate = patch.startDate ?? null;
         if (Object.prototype.hasOwnProperty.call(patch, "endDate")) nextPatch.endDate = patch.endDate ?? null;
         await getApi().kanban.updateCard({ id: cardId, patch: nextPatch });
+        await loadBoardData(selectedBoardId);
+        setError(null);
+    }
+
+    async function saveCardRecurrence(cardId: string, trigger: KanbanRecurrenceTrigger, cycle: KanbanRecurrenceCycle): Promise<void> {
+        const card = cards.find((item) => item.id === cardId);
+        if (!card || !selectedBoardId) return;
+        if (card.recurrence) {
+            await getApi().kanban.updateCardRecurrence({ cardId, trigger, cycle });
+        } else {
+            await getApi().kanban.enableCardRecurrence({ cardId, trigger, cycle });
+        }
+        await loadBoardData(selectedBoardId);
+        setError(null);
+    }
+
+    async function disableCardRecurrence(cardId: string): Promise<void> {
+        if (!selectedBoardId) return;
+        await getApi().kanban.disableCardRecurrence({ cardId });
         await loadBoardData(selectedBoardId);
         setError(null);
     }
@@ -362,7 +422,7 @@ export function KanbanPage(): JSX.Element {
 
     async function createAndAttachLabel(card: KanbanCard, name: string): Promise<void> {
         if (!selectedBoardId) return;
-        const label = await getApi().kanban.createLabel({ boardId: selectedBoardId, name, color: randomLabelColor(labels.length) });
+        const label = await getApi().kanban.createLabel({ boardId: selectedBoardId, name, color: stableLabelColor(selectedBoardId, name) });
         await getApi().kanban.setCardLabels({ cardId: card.id, labelIds: [...card.labelIds, label.id] });
         await loadBoardData(selectedBoardId);
     }
@@ -592,6 +652,7 @@ export function KanbanPage(): JSX.Element {
                                             <SortableColumn
                                                 key={column.id}
                                                 column={column}
+                                                completionColumnId={selectedBoard.completionColumnId}
                                                 cards={activeCards.filter((card) => card.columnId === column.id).sort((left, right) => left.sortOrder - right.sortOrder)}
                                                 labels={labels}
                                                 draftTitle={draftCardTitles[column.id] ?? ""}
@@ -606,6 +667,7 @@ export function KanbanPage(): JSX.Element {
                                                 onDeleteCard={(cardId) => void deleteCard(cardId)}
                                                 onRename={() => void renameColumn(column)}
                                                 onArchive={() => void archiveColumn(column)}
+                                                onSetCompletion={() => void setCompletionColumn(column)}
                                                 dropTarget={activeDraggingCard && cardDropTarget?.columnId === column.id ? cardDropTarget : null}
                                             />
                                         ))}
@@ -639,14 +701,18 @@ export function KanbanPage(): JSX.Element {
                     ) : null}
 
                     {helpOpen ? <KeyboardShortcutsHelp onClose={() => setHelpOpen(false)} /> : null}
+                    {aiSettingsOpen ? <AiSettingsDialog onClose={() => setAiSettingsOpen(false)} /> : null}
 
                     {selectedCard ? (
                         <CardDetails
                             card={selectedCard}
+                            cards={activeCards}
                             columns={visibleColumns}
                             labels={labels}
                             onClose={() => setSelectedCardId("")}
                             onSave={updateCard}
+                            onSaveRecurrence={saveCardRecurrence}
+                            onDisableRecurrence={disableCardRecurrence}
                             onCreateLabel={createAndAttachLabel}
                             onToggleLabel={toggleCardLabel}
                         />
@@ -695,6 +761,117 @@ function KeyboardShortcutsHelp({ onClose }: { onClose: () => void }): JSX.Elemen
                         </ul>
                     </aside>
                 </div>
+            </section>
+        </div>
+    );
+}
+
+function AiSettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
+    const [settings, setSettings] = useState<AiSettingsState | null>(null);
+    const [enabled, setEnabled] = useState(false);
+    const [baseUrl, setBaseUrl] = useState("");
+    const [model, setModel] = useState("");
+    const [pending, setPending] = useState(false);
+    const [testResult, setTestResult] = useState<AiTestConnectionResult | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const connectionError = settings?.lastError?.scope === "testConnection" ? settings.lastError.message : null;
+
+    useEffect(() => {
+        let active = true;
+        void getApi().ai.getSettings()
+            .then((nextSettings) => {
+                if (!active) return;
+                setSettings(nextSettings);
+                setEnabled(nextSettings.enabled || nextSettings.configured);
+                setBaseUrl(nextSettings.baseUrl);
+                setModel(nextSettings.model);
+            })
+            .catch((caught) => {
+                if (active) setError(errorMessage(caught));
+            });
+        return () => { active = false; };
+    }, []);
+
+    useEffect(() => {
+        if (!testResult?.ok) return;
+        const timeout = window.setTimeout(() => setTestResult(null), 3500);
+        return () => window.clearTimeout(timeout);
+    }, [testResult]);
+
+    async function save(): Promise<AiSettingsState> {
+        setPending(true);
+        setError(null);
+        try {
+            const nextSettings = await getApi().ai.saveSettings({
+                enabled,
+                baseUrl,
+                model
+            });
+            setSettings(nextSettings);
+            return nextSettings;
+        } catch (caught) {
+            const message = errorMessage(caught);
+            setError(message);
+            throw caught;
+        } finally {
+            setPending(false);
+        }
+    }
+
+    async function testConnection(): Promise<void> {
+        try {
+            await save();
+            setPending(true);
+            const result = await getApi().ai.testConnection();
+            setTestResult(result);
+            const nextSettings = await getApi().ai.getSettings();
+            setSettings(nextSettings);
+        } catch (caught) {
+            setError(errorMessage(caught));
+        } finally {
+            setPending(false);
+        }
+    }
+
+    async function saveAndClose(): Promise<void> {
+        try {
+            await save();
+            onClose();
+        } catch { }
+    }
+
+    return (
+        <div className="kanban-dialog-backdrop" role="presentation">
+            <section className="kanban-dialog kanban-ai-settings-dialog" role="dialog" aria-modal="true" aria-label="AI Settings">
+                <header>
+                    <strong>AI Settings</strong>
+                    <button type="button" onClick={onClose} disabled={pending} aria-label="Close AI Settings"><X size={16} /></button>
+                </header>
+                <div className="kanban-ai-settings-body">
+                    <label className="kanban-ai-toggle">
+                        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+                        <span>Enable AI suggestions</span>
+                    </label>
+                    <label>
+                        <span>Base URL</span>
+                        <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="http://localhost:11434/v1" />
+                    </label>
+                    <label>
+                        <span>Model</span>
+                        <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="llama3.2" />
+                    </label>
+                    <div className={`kanban-ai-status ${settings?.configured ? "configured" : ""}`}>
+                        {settings?.configured ? "Configured" : "Not configured"}
+                    </div>
+                    {testResult ? <p className={testResult.ok ? "kanban-ai-result ok" : "kanban-ai-result"} aria-live="polite">{testResult.ok ? <ArrowRight size={14} /> : null}<span>{testResult.message}</span></p> : null}
+                    {!testResult && connectionError ? <p className="kanban-ai-result">{connectionError}</p> : null}
+                    {error ? <p className="kanban-ai-result">{error}</p> : null}
+                </div>
+                <footer>
+                    <button type="button" onClick={() => void getApi().ai.openLogFile()} disabled={pending}>Open log</button>
+                    <button type="button" onClick={() => void testConnection()} disabled={pending}>{pending ? "Testing..." : "Test Connection"}</button>
+                    <button type="button" className="primary" onClick={() => void saveAndClose()} disabled={pending}>{pending ? "Saving..." : "Save"}</button>
+                </footer>
             </section>
         </div>
     );
@@ -860,8 +1037,18 @@ function sortedCardsInColumn(cards: KanbanCard[], columnId: string): KanbanCard[
     return cards.filter((card) => card.columnId === columnId).sort((left, right) => left.sortOrder - right.sortOrder);
 }
 
+function cardAiContext(card: KanbanCard, cards: KanbanCard[], labels: KanbanLabel[], columns: KanbanColumn[]): AiSuggestionCardContext {
+    return {
+        currentCard: card,
+        relatedCards: relatedCardsForAiContext(card, cards),
+        boardLabels: labels,
+        columnName: columns.find((column) => column.id === card.columnId)?.name
+    };
+}
+
 function SortableColumn({
     column,
+    completionColumnId,
     cards,
     labels,
     draftTitle,
@@ -876,9 +1063,11 @@ function SortableColumn({
     onDeleteCard,
     onRename,
     onArchive,
+    onSetCompletion,
     dropTarget
 }: {
     column: KanbanColumn;
+    completionColumnId?: string;
     cards: KanbanCard[];
     labels: KanbanLabel[];
     draftTitle: string;
@@ -893,10 +1082,13 @@ function SortableColumn({
     onDeleteCard: (id: string) => void;
     onRename: () => void;
     onArchive: () => void;
+    onSetCompletion: () => void;
     dropTarget: CardDropTarget | null;
 }): JSX.Element {
     const { attributes, isDragging, isOver, listeners, setNodeRef, transform, transition } = useSortable({ id: `column:${column.id}` });
     const dropIndex = dropTarget?.index ?? -1;
+    const [menuOpen, setMenuOpen] = useState(false);
+    const isCompletionColumn = completionColumnId === column.id;
 
     return (
         <section ref={setNodeRef} className={`kanban-column ${isOver || dropTarget ? "over" : ""} ${dropTarget ? "drop-target" : ""} ${isDragging ? "dragging" : ""}`} style={{ transform: CSS.Transform.toString(transform), transition }}>
@@ -904,9 +1096,28 @@ function SortableColumn({
                 <span className="kanban-column-dot" style={{ background: column.color ?? "#9ca3af" }} />
                 <div className="kanban-column-title" {...attributes} {...listeners} aria-label={`Drag ${column.name}`}>
                     <strong>{column.name}</strong>
+                    {isCompletionColumn ? <span className="kanban-completion-marker" aria-label="完成列" title="完成列"><Check size={12} /></span> : null}
                 </div>
-                <button type="button" className="kanban-column-rename" onClick={onRename} aria-label={`Rename ${column.name}`}><Pencil size={13} /></button>
-                <button type="button" className="kanban-column-archive" onClick={onArchive} aria-label={`Archive ${column.name}`}><Archive size={13} /></button>
+                <button type="button" className="kanban-column-rename" onPointerDown={(event) => event.stopPropagation()} onClick={onRename} aria-label={`Rename ${column.name}`}><Pencil size={13} /></button>
+                <div
+                    className="kanban-column-menu"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onBlur={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false);
+                    }}
+                >
+                    <button type="button" className="kanban-column-more" onClick={() => setMenuOpen((current) => !current)} aria-label={`Column actions for ${column.name}`} aria-expanded={menuOpen}><MoreHorizontal size={14} /></button>
+                    {menuOpen ? (
+                        <div className="kanban-column-menu-popover" role="menu">
+                            <button type="button" role="menuitem" onMouseDown={(event) => event.preventDefault()} onClick={() => { onSetCompletion(); setMenuOpen(false); }} disabled={isCompletionColumn}>
+                                <Check size={13} /> Mark done
+                            </button>
+                            <button type="button" role="menuitem" onMouseDown={(event) => event.preventDefault()} onClick={() => { onArchive(); setMenuOpen(false); }}>
+                                <Archive size={13} /> Archive
+                            </button>
+                        </div>
+                    ) : null}
+                </div>
                 <span className="kanban-column-count">{cards.length}</span>
             </header>
             <SortableContext items={cards.map((card) => `card:${card.id}`)} strategy={verticalListSortingStrategy}>
@@ -929,7 +1140,14 @@ function SortableColumn({
             </SortableContext>
             {composerOpen ? (
                 <form className="kanban-card-composer open" onSubmit={(event) => { event.preventDefault(); onCreateCard(); }}>
-                    <input ref={composerInputRef} value={draftTitle} onChange={(event) => onDraftTitleChange(event.target.value)} placeholder="Task title" autoFocus />
+                    <input
+                        ref={composerInputRef}
+                        value={draftTitle}
+                        onChange={(event) => onDraftTitleChange(event.target.value)}
+                        placeholder="Task title"
+                        autoFocus
+                        aria-label="Task title"
+                    />
                     <div className="kanban-card-composer-actions">
                         <button type="submit" disabled={!draftTitle.trim()} aria-label={`Add task to ${column.name}`}>
                             <Plus size={14} /> Add
@@ -1015,6 +1233,7 @@ function SortableCard({ card, labels, onOpen, onArchive, onDelete }: {
             </div>
             <div className="kanban-card-footerline">
                 <span className="kanban-date-chip"><CalendarDays size={12} /> {formatCardDateRange(card)}</span>
+                {card.recurrence ? <RecurrenceBadge card={card} compact /> : null}
             </div>
         </article>
     );
@@ -1048,6 +1267,7 @@ function ListView({ columns, cards, labels, onOpenCard, onMoveCard, onChangeDate
                                 </span>
                                 <PriorityBadge priority={card.priority} />
                                 <ListDateRangeControl card={card} onChange={(startDate, endDate) => onChangeDateRange(card.id, startDate, endDate)} />
+                                {card.recurrence ? <RecurrenceBadge card={card} compact /> : <span />}
                                 <select value={card.columnId} onChange={(event) => onMoveCard(card.id, event.target.value)}>
                                     {columns.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
                                 </select>
@@ -1199,12 +1419,15 @@ function ArchiveView({ cards, labels, onOpenCard, onRestore, onDelete }: {
     );
 }
 
-function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, onToggleLabel }: {
+function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecurrence, onDisableRecurrence, onCreateLabel, onToggleLabel }: {
     card: KanbanCard;
+    cards: KanbanCard[];
     columns: KanbanColumn[];
     labels: KanbanLabel[];
     onClose: () => void;
     onSave: (cardId: string, patch: Partial<KanbanCardPatch>) => Promise<void>;
+    onSaveRecurrence: (cardId: string, trigger: KanbanRecurrenceTrigger, cycle: KanbanRecurrenceCycle) => Promise<void>;
+    onDisableRecurrence: (cardId: string) => Promise<void>;
     onCreateLabel: (card: KanbanCard, name: string) => Promise<void>;
     onToggleLabel: (card: KanbanCard, labelId: string) => Promise<void>;
 }): JSX.Element {
@@ -1213,17 +1436,29 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
     const [priority, setPriority] = useState<KanbanPriority>(card.priority);
     const [startDate, setStartDate] = useState<number | null>(cardStartDate(card) ?? null);
     const [endDate, setEndDate] = useState<number | null>(cardEndDate(card) ?? null);
-    const [descriptionJson, setDescriptionJson] = useState<KanbanRichTextDocument | undefined>(card.descriptionJson);
+    const [descriptionMarkdown, setDescriptionMarkdown] = useState(card.descriptionMarkdown ?? card.descriptionText ?? "");
     const [descriptionText, setDescriptionText] = useState(card.descriptionText ?? "");
     const [subtasks, setSubtasks] = useState<KanbanSubtask[]>(card.subtasks);
     const [comments, setComments] = useState<KanbanComment[]>(card.comments);
     const [subtaskDraft, setSubtaskDraft] = useState("");
     const [commentDraft, setCommentDraft] = useState("");
-    const [commentDraftJson, setCommentDraftJson] = useState<KanbanRichTextDocument>(emptyRichTextDocument);
     const [tagDraft, setTagDraft] = useState("");
     const [tagEditorOpen, setTagEditorOpen] = useState(false);
     const lastSavedSnapshot = useRef("");
     const selectedColumn = columns.find((column) => column.id === columnId);
+    const labelSuggestions = useMemo(() => tagEditorOpen ? suggestBoardLabelsByPrefix(labels, card.labelIds, tagDraft, 5) : [], [tagEditorOpen, labels, card.labelIds, tagDraft]);
+    const aiContext = useMemo(() => cardAiContext({
+        ...card,
+        title,
+        columnId,
+        priority,
+        startDate: startDate ?? undefined,
+        endDate: endDate ?? undefined,
+        descriptionMarkdown,
+        descriptionText: markdownToPlainText(descriptionMarkdown) ?? descriptionText,
+        subtasks,
+        comments
+    }, cards, labels, columns), [card, cards, columns, comments, descriptionMarkdown, descriptionText, labels, columnId, priority, startDate, endDate, subtasks, title]);
     const subtaskSensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
         useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -1235,7 +1470,7 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
         setPriority(card.priority);
         setStartDate(cardStartDate(card) ?? null);
         setEndDate(cardEndDate(card) ?? null);
-        setDescriptionJson(card.descriptionJson);
+        setDescriptionMarkdown(card.descriptionMarkdown ?? card.descriptionText ?? "");
         setDescriptionText(card.descriptionText ?? "");
         setSubtasks(card.subtasks);
         setComments(card.comments);
@@ -1245,7 +1480,7 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
             priority: card.priority,
             startDate: cardStartDate(card) ?? null,
             endDate: cardEndDate(card) ?? null,
-            descriptionJson: card.descriptionJson,
+            descriptionMarkdown: card.descriptionMarkdown ?? card.descriptionText ?? "",
             descriptionText: card.descriptionText ?? "",
             subtasks: card.subtasks,
             comments: card.comments
@@ -1253,7 +1488,14 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
     }, [card.id, card.updatedAt]);
 
     useEffect(() => {
-        const snapshot = cardDetailsSnapshot({ title, columnId, priority, startDate, endDate, descriptionJson, descriptionText, subtasks, comments });
+        setSubtaskDraft("");
+        setCommentDraft("");
+        setTagDraft("");
+        setTagEditorOpen(false);
+    }, [card.id]);
+
+    useEffect(() => {
+        const snapshot = cardDetailsSnapshot({ title, columnId, priority, startDate, endDate, descriptionMarkdown, descriptionText, subtasks, comments });
         if (!lastSavedSnapshot.current) {
             lastSavedSnapshot.current = snapshot;
             return;
@@ -1267,7 +1509,7 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
                 priority,
                 startDate,
                 endDate,
-                descriptionJson,
+                descriptionMarkdown,
                 descriptionText,
                 subtasks,
                 comments
@@ -1276,37 +1518,7 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
             });
         }, 650);
         return () => window.clearTimeout(timeout);
-    }, [card.id, title, columnId, priority, startDate, endDate, descriptionJson, descriptionText, subtasks, comments, onSave]);
-
-    function saveDetailsNow(patch: Partial<{
-        title: string;
-        columnId: string;
-        priority: KanbanPriority;
-        startDate: number | null;
-        endDate: number | null;
-        descriptionJson?: KanbanRichTextDocument;
-        descriptionText: string;
-        subtasks: KanbanSubtask[];
-        comments: KanbanComment[];
-    }>): void {
-        const nextDetails = {
-            title,
-            columnId,
-            priority,
-            startDate,
-            endDate,
-            descriptionJson,
-            descriptionText,
-            subtasks,
-            comments,
-            ...patch
-        };
-        const snapshot = cardDetailsSnapshot(nextDetails);
-        lastSavedSnapshot.current = snapshot;
-        void onSave(card.id, nextDetails).catch(() => {
-            lastSavedSnapshot.current = "";
-        });
-    }
+    }, [card.id, title, columnId, priority, startDate, endDate, descriptionMarkdown, descriptionText, subtasks, comments, onSave]);
 
     function addSubtask(): void {
         const nextTitle = subtaskDraft.trim();
@@ -1344,7 +1556,6 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
         const now = Date.now();
         setComments((current) => [...current, { id: crypto.randomUUID(), body, createdAt: now, updatedAt: now }]);
         setCommentDraft("");
-        setCommentDraftJson(emptyRichTextDocument);
     }
 
     function deleteComment(id: string): void {
@@ -1359,11 +1570,26 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
         void onCreateLabel(card, name);
     }
 
+    function applyLabelSuggestion(suggestion: AiLabelSuggestion): void {
+        setTagDraft("");
+        setTagEditorOpen(false);
+        if (suggestion.existingLabelId && !card.labelIds.includes(suggestion.existingLabelId)) {
+            void onToggleLabel(card, suggestion.existingLabelId);
+            return;
+        }
+        void onCreateLabel(card, suggestion.name);
+    }
+
     return (
         <aside className="kanban-details" aria-label="Card details">
             <header className="kanban-details-header">
                 <label className="kanban-title-label">
-                    <input className="kanban-title-input" aria-label="Card title" value={title} onChange={(event) => setTitle(event.target.value)} />
+                    <input
+                        className="kanban-title-input"
+                        aria-label="Card title"
+                        value={title}
+                        onChange={(event) => setTitle(event.target.value)}
+                    />
                     <span>Updated {formatDisplayDate(card.updatedAt)}</span>
                 </label>
                 <button type="button" onClick={onClose} aria-label="Close details"><X size={16} /></button>
@@ -1371,16 +1597,19 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
             <div className="kanban-details-body">
                 <section className="kanban-detail-section">
                     <h4>Date Range</h4>
-                    <DateRangePicker
-                        className="kanban-detail-control kanban-date-control"
-                        ariaLabel="Choose date range"
-                        startDate={startDate}
-                        endDate={endDate}
-                        onChange={(nextStartDate, nextEndDate) => {
-                            setStartDate(nextStartDate);
-                            setEndDate(nextEndDate);
-                        }}
-                    />
+                    <div className="kanban-detail-date-row">
+                        <DateRangePicker
+                            className="kanban-detail-control kanban-date-control"
+                            ariaLabel="Choose date range"
+                            startDate={startDate}
+                            endDate={endDate}
+                            onChange={(nextStartDate, nextEndDate) => {
+                                setStartDate(nextStartDate);
+                                setEndDate(nextEndDate);
+                            }}
+                        />
+                        <RecurrenceControl card={card} onSave={(trigger, cycle) => onSaveRecurrence(card.id, trigger, cycle)} onDisable={() => onDisableRecurrence(card.id)} />
+                    </div>
                 </section>
                 <section className="kanban-detail-section">
                     <h4>Category</h4>
@@ -1391,13 +1620,16 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
                 </section>
                 <section className="kanban-detail-section kanban-detail-description">
                     <h4>Description</h4>
-                    <RichTextEditor
-                        value={descriptionJson}
-                        onChange={(json, text) => { setDescriptionJson(json); setDescriptionText(text); }}
-                        onSubmit={(json, text) => {
-                            setDescriptionJson(json);
-                            setDescriptionText(text);
-                            saveDetailsNow({ descriptionJson: json, descriptionText: text });
+                    <CompletionMarkdownTextarea
+                        value={descriptionMarkdown}
+                        ariaLabel="Card description"
+                        minChars={5}
+                        maxChars={50}
+                        field="description"
+                        context={aiContext}
+                        onChange={(value) => {
+                            setDescriptionMarkdown(value);
+                            setDescriptionText(markdownToPlainText(value) ?? "");
                         }}
                     />
                 </section>
@@ -1417,7 +1649,7 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
                             </SortableContext>
                         </DndContext>
                         <form className="kanban-inline-add kanban-subtask-add" onSubmit={(event) => { event.preventDefault(); addSubtask(); }}>
-                            <input value={subtaskDraft} onChange={(event) => setSubtaskDraft(event.target.value)} placeholder="Add subtask" />
+                            <input value={subtaskDraft} onChange={(event) => setSubtaskDraft(event.target.value)} placeholder="Add subtask" aria-label="Add subtask" />
                         </form>
                     </div>
                 </section>
@@ -1430,9 +1662,25 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
                             </button>
                         ))}
                         {tagEditorOpen ? (
-                            <form className="kanban-tag-input-pill" onSubmit={(event) => { event.preventDefault(); createTag(); }}>
-                                <input autoFocus value={tagDraft} onChange={(event) => setTagDraft(event.target.value)} placeholder="Tag" onBlur={() => { if (!tagDraft.trim()) setTagEditorOpen(false); }} />
-                            </form>
+                            <span className="kanban-tag-suggest-wrap">
+                                <form className="kanban-tag-input-pill" onSubmit={(event) => { event.preventDefault(); createTag(); }}>
+                                    <input autoFocus value={tagDraft} onChange={(event) => setTagDraft(event.target.value)} placeholder="Tag" onBlur={() => { if (!tagDraft.trim()) setTagEditorOpen(false); }} />
+                                </form>
+                                {labelSuggestions.length > 0 ? (
+                                    <span className="kanban-tag-suggestions" aria-label="Suggested tags">
+                                        {labelSuggestions.map((suggestion) => (
+                                            <button
+                                                type="button"
+                                                key={`${suggestion.existingLabelId ?? "new"}:${suggestion.name}`}
+                                                onMouseDown={(event) => event.preventDefault()}
+                                                onClick={() => applyLabelSuggestion(suggestion)}
+                                            >
+                                                {suggestion.name}
+                                            </button>
+                                        ))}
+                                    </span>
+                                ) : null}
+                            </span>
                         ) : (
                             <button type="button" className="kanban-tag-add" aria-label="Add tag" onClick={() => setTagEditorOpen(true)}><Plus size={13} /></button>
                         )}
@@ -1443,7 +1691,7 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
                     <div className="kanban-comments">
                         {comments.map((comment) => (
                             <article className="kanban-comment" key={comment.id}>
-                                <p>{comment.body}</p>
+                                <MarkdownBlock markdown={comment.body} />
                                 <div>
                                     <span>{formatDisplayDate(comment.createdAt)}</span>
                                     <button type="button" onClick={() => deleteComment(comment.id)} aria-label="Delete comment"><Trash2 size={13} /></button>
@@ -1451,10 +1699,15 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
                             </article>
                         ))}
                         <form className="kanban-comment-form" onSubmit={(event) => { event.preventDefault(); addComment(); }}>
-                            <RichTextEditor
-                                value={commentDraftJson}
-                                onChange={(json, text) => { setCommentDraftJson(json); setCommentDraft(text); }}
-                                onSubmit={(_, text) => addComment(text)}
+                            <CompletionMarkdownTextarea
+                                value={commentDraft}
+                                ariaLabel="Comment"
+                                minChars={5}
+                                maxChars={50}
+                                field="comment"
+                                context={aiContext}
+                                onChange={setCommentDraft}
+                                onSubmit={() => addComment()}
                             />
                             <button type="submit" disabled={!commentDraft.trim()}><Plus size={13} /> Add comment</button>
                         </form>
@@ -1462,6 +1715,109 @@ function CardDetails({ card, columns, labels, onClose, onSave, onCreateLabel, on
                 </section>
             </div>
         </aside>
+    );
+}
+
+function RecurrenceControl({ card, onSave, onDisable }: {
+    card: KanbanCard;
+    onSave: (trigger: KanbanRecurrenceTrigger, cycle: KanbanRecurrenceCycle) => Promise<void>;
+    onDisable: () => Promise<void>;
+}): JSX.Element {
+    const [open, setOpen] = useState(false);
+    const [trigger, setTrigger] = useState<KanbanRecurrenceTrigger>(card.recurrence?.trigger ?? "completion");
+    const [cycle, setCycle] = useState<KanbanRecurrenceCycle>(card.recurrence?.cycle ?? "daily");
+    const [pending, setPending] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        setTrigger(card.recurrence?.trigger ?? "completion");
+        setCycle(card.recurrence?.cycle ?? "daily");
+        setError(null);
+    }, [card.id, card.recurrence?.trigger, card.recurrence?.cycle]);
+
+    async function commit(): Promise<void> {
+        setPending(true);
+        try {
+            await onSave(trigger, cycle);
+            setOpen(false);
+            setError(null);
+        } catch (caught) {
+            setError(errorMessage(caught));
+        } finally {
+            setPending(false);
+        }
+    }
+
+    async function disable(): Promise<void> {
+        if (!card.recurrence) return;
+        setPending(true);
+        try {
+            await onDisable();
+            setOpen(false);
+            setError(null);
+        } catch (caught) {
+            setError(errorMessage(caught));
+        } finally {
+            setPending(false);
+        }
+    }
+
+    const summary = recurrenceSummary(card);
+    return (
+        <span
+            className={`kanban-recurrence-control ${card.recurrence ? "has-clear" : ""}`}
+            onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+            }}
+        >
+            <button type="button" className={`kanban-recurrence-trigger ${card.recurrence?.status === "blocked" ? "blocked" : ""}`} onClick={() => setOpen((current) => !current)} aria-expanded={open} aria-label="周期设置">
+                {card.recurrence?.status === "blocked" ? <AlertTriangle size={14} /> : <Repeat2 size={14} />}
+                <span>{card.recurrence ? summary : "周期"}</span>
+            </button>
+            {card.recurrence ? (
+                <button
+                    type="button"
+                    className="kanban-recurrence-clear"
+                    aria-label="取消周期"
+                    title="取消周期"
+                    disabled={pending}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => { event.stopPropagation(); void disable(); }}
+                >
+                    <X size={13} />
+                </button>
+            ) : null}
+            {open ? (
+                <div className="kanban-recurrence-popover" role="dialog" aria-label="周期设置">
+                    <div className="kanban-recurrence-popover-title">
+                        <strong>{card.recurrence ? "周期" : "开启周期"}</strong>
+                        <span>{card.recurrence ? summary : "基于当前卡片创建后续卡片"}</span>
+                    </div>
+                    {card.recurrence?.status === "blocked" ? <p className="kanban-recurrence-warning">{card.recurrence.blockedReason ?? "需要处理"}</p> : null}
+                    <div className="kanban-recurrence-selects">
+                        <CustomSelect
+                            label="触发方式"
+                            value={trigger}
+                            options={recurrenceTriggers.map((item) => ({ value: item, label: recurrenceTriggerLabel(item) }))}
+                            icon={<Repeat2 size={14} />}
+                            onChange={(value) => setTrigger(value as KanbanRecurrenceTrigger)}
+                        />
+                        <CustomSelect
+                            label="周期"
+                            value={cycle}
+                            options={recurrenceCycles.map((item) => ({ value: item, label: recurrenceCycleLabel(item) }))}
+                            icon={<CalendarDays size={14} />}
+                            onChange={(value) => setCycle(value as KanbanRecurrenceCycle)}
+                        />
+                    </div>
+                    <small>{trigger === "fixed" ? "到周期后静默创建下一张卡片。" : "当前卡片进入完成列后立即创建下一张卡片。"}</small>
+                    {error ? <p className="kanban-recurrence-warning">{error}</p> : null}
+                    <button type="button" onClick={() => void commit()} disabled={pending}>
+                        {pending ? "保存中..." : card.recurrence ? "保存周期" : "开启周期"}
+                    </button>
+                </div>
+            ) : null}
+        </span>
     );
 }
 
@@ -1555,10 +1911,198 @@ function CustomSelect({ label, value, options, icon, showLabel = true, onChange 
     );
 }
 
-function RichTextEditor({ value, onChange, onSubmit }: {
+function MarkdownTextarea({ value, ariaLabel, onChange, onSubmit }: {
+    value: string;
+    ariaLabel: string;
+    onChange: (value: string) => void;
+    onSubmit?: () => void;
+}): JSX.Element {
+    const ref = useRef<HTMLTextAreaElement | null>(null);
+    useAutoGrowTextarea(ref, value);
+
+    return (
+        <textarea
+            ref={ref}
+            className="kanban-markdown-textarea"
+            value={value}
+            aria-label={ariaLabel}
+            spellCheck
+            onChange={(event) => onChange(event.target.value)}
+            onKeyDown={(event) => {
+                if (!onSubmit || !isMarkdownSubmitShortcut(event)) return;
+                event.preventDefault();
+                onSubmit();
+            }}
+        />
+    );
+}
+
+function CompletionMarkdownTextarea({ value, ariaLabel, minChars, maxChars, field, context, onChange, onSubmit }: {
+    value: string;
+    ariaLabel: string;
+    minChars: number;
+    maxChars: number;
+    field: AiTextSuggestionField;
+    context: AiSuggestionCardContext;
+    onChange: (value: string) => void;
+    onSubmit?: () => void;
+}): JSX.Element {
+    const ref = useRef<HTMLTextAreaElement | null>(null);
+    const [scrollTop, setScrollTop] = useState(0);
+    const { suggestion, cursor, refreshCursor, clearSuggestion, focusCompletion, blurCompletion, acceptSuggestion } = useInlineCompletion({ value, minChars, maxChars, field, context, elementRef: ref });
+    useAutoGrowTextarea(ref, value);
+
+    return (
+        <span className="kanban-completion-wrap textarea">
+            <textarea
+                ref={ref}
+                className="kanban-markdown-textarea"
+                value={value}
+                aria-label={ariaLabel}
+                spellCheck
+                onFocus={focusCompletion}
+                onBlur={blurCompletion}
+                onChange={(event) => { clearSuggestion(); onChange(event.target.value); }}
+                onSelect={refreshCursor}
+                onClick={refreshCursor}
+                onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+                onKeyDown={(event) => {
+                    if (event.key === "Tab" && suggestion) {
+                        event.preventDefault();
+                        const nextValue = acceptSuggestion();
+                        if (nextValue !== null) onChange(nextValue);
+                        return;
+                    }
+                    if (!onSubmit || !isMarkdownSubmitShortcut(event)) return;
+                    event.preventDefault();
+                    onSubmit();
+                }}
+            />
+            {suggestion ? <span className="kanban-completion-ghost textarea" style={{ transform: `translateY(${-scrollTop}px)` }} aria-hidden="true"><span>{cursor.before}</span><strong>{suggestion}</strong></span> : null}
+        </span>
+    );
+}
+
+function useAutoGrowTextarea(elementRef: MutableRefObject<HTMLTextAreaElement | null>, value: string): void {
+    useLayoutEffect(() => {
+        const element = elementRef.current;
+        if (!element) return;
+        element.style.height = "0px";
+        element.style.height = `${element.scrollHeight}px`;
+    }, [elementRef, value]);
+}
+
+function useInlineCompletion<TElement extends HTMLInputElement | HTMLTextAreaElement>({ value, minChars, maxChars, field, context, elementRef }: {
+    value: string;
+    minChars: number;
+    maxChars: number;
+    field: AiTextSuggestionField;
+    context: AiSuggestionCardContext;
+    elementRef: MutableRefObject<TElement | null>;
+}): {
+    suggestion: string;
+    cursor: CursorText;
+    refreshCursor: () => void;
+    clearSuggestion: () => void;
+    focusCompletion: () => void;
+    blurCompletion: () => void;
+    acceptSuggestion: () => string | null;
+} {
+    const [suggestion, setSuggestion] = useState("");
+    const [cursor, setCursor] = useState<CursorText>({ before: value, after: "" });
+    const [focused, setFocused] = useState(false);
+    const [requestTick, setRequestTick] = useState(0);
+    const requestIdRef = useRef(0);
+    const contextRef = useRef(context);
+
+    useEffect(() => {
+        contextRef.current = context;
+    }, [context]);
+
+    function currentCursor(): CursorText {
+        const element = elementRef.current;
+        const start = element?.selectionStart ?? value.length;
+        const end = element?.selectionEnd ?? start;
+        return { before: value.slice(0, start), after: value.slice(end) };
+    }
+
+    function refreshCursor(): void {
+        setSuggestion("");
+        setCursor(currentCursor());
+        requestIdRef.current += 1;
+        if (focused) setRequestTick((current) => current + 1);
+    }
+
+    function clearSuggestion(): void {
+        setSuggestion("");
+        requestIdRef.current += 1;
+    }
+
+    function focusCompletion(): void {
+        setFocused(true);
+        setCursor(currentCursor());
+        setSuggestion("");
+        requestIdRef.current += 1;
+        setRequestTick((current) => current + 1);
+    }
+
+    function blurCompletion(): void {
+        setFocused(false);
+        setSuggestion("");
+        requestIdRef.current += 1;
+    }
+
+    function acceptSuggestion(): string | null {
+        if (!suggestion) return null;
+        const nextValue = `${cursor.before}${suggestion}${cursor.after}`;
+        setSuggestion("");
+        requestIdRef.current += 1;
+        window.requestAnimationFrame(() => {
+            const nextPosition = cursor.before.length + suggestion.length;
+            elementRef.current?.setSelectionRange(nextPosition, nextPosition);
+        });
+        return nextValue;
+    }
+
+    useEffect(() => {
+        const nextCursor = currentCursor();
+        setCursor(nextCursor);
+        setSuggestion("");
+        const activeRequestId = requestIdRef.current + 1;
+        requestIdRef.current = activeRequestId;
+        if (!shouldRequestInlineCompletion(nextCursor.before, nextCursor.after, minChars, focused)) return;
+        const requestedCursor = nextCursor;
+        const timeout = window.setTimeout(() => {
+            void getApi().ai.suggestText({ field, textBeforeCursor: nextCursor.before, textAfterCursor: nextCursor.after, maxChars, context: contextRef.current })
+                .then((result) => {
+                    const liveCursor = currentCursor();
+                    if (requestIdRef.current === activeRequestId && shouldApplyInlineCompletion(requestedCursor, liveCursor, minChars, focused)) {
+                        setSuggestion(result.suggestion ?? "");
+                    }
+                })
+                .catch(() => {
+                    if (requestIdRef.current === activeRequestId) setSuggestion("");
+                });
+        }, 500);
+        return () => window.clearTimeout(timeout);
+    }, [value, minChars, maxChars, field, elementRef, focused, requestTick]);
+
+    return { suggestion, cursor, refreshCursor, clearSuggestion, focusCompletion, blurCompletion, acceptSuggestion };
+}
+
+function MarkdownBlock({ markdown }: { markdown: string }): JSX.Element {
+    return (
+        <div className="kanban-markdown-body">
+            <ReactMarkdown>{markdown}</ReactMarkdown>
+        </div>
+    );
+}
+
+function RichTextEditor({ value, onChange, onSubmit, enableMarkdownLinks = false }: {
     value?: KanbanRichTextDocument;
     onChange: (json: KanbanRichTextDocument, text: string) => void;
     onSubmit?: RichTextSubmitHandler;
+    enableMarkdownLinks?: boolean;
 }): JSX.Element {
     const pendingValueRef = useRef<JSONContent | null>(null);
     const onChangeRef = useRef(onChange);
@@ -1575,8 +2119,38 @@ function RichTextEditor({ value, onChange, onSubmit }: {
         content: (value as JSONContent | undefined) ?? { type: "doc", content: [{ type: "paragraph" }] },
         editorProps: {
             attributes: { class: "kanban-editor-content" },
+            handlePaste: (view, event) => {
+                const currentEditor = editorRef.current;
+                if (!enableMarkdownLinks || !currentEditor) return false;
+                const pastedText = event.clipboardData?.getData("text/plain") ?? "";
+                const linkTarget = resolveRichTextLinkPaste(pastedText);
+                if (!linkTarget) return false;
+                event.preventDefault();
+                return insertRichTextLink(currentEditor, { from: view.state.selection.from, to: view.state.selection.to }, linkTarget);
+            },
+            handleTextInput: (view, from, to, text) => {
+                const currentEditor = editorRef.current;
+                if (!enableMarkdownLinks || !currentEditor || text !== ")") return false;
+                const resolvedPosition = view.state.doc.resolve(from);
+                const textBeforeCursor = resolvedPosition.parent.textBetween(0, resolvedPosition.parentOffset, undefined, "\ufffc") + text;
+                const markdownLink = findRichTextMarkdownLinkSuffix(textBeforeCursor);
+                if (!markdownLink) return false;
+                return insertRichTextLink(
+                    currentEditor,
+                    { from: resolvedPosition.start() + markdownLink.start, to },
+                    { label: markdownLink.label, url: markdownLink.url, selectLabel: false }
+                );
+            },
             handleKeyDown: (view, event) => {
                 const currentEditor = editorRef.current;
+                if (currentEditor && isRichTextListIndentShortcut(event) && isRichTextListActive(currentEditor)) {
+                    const handled = applyRichTextListIndentation(currentEditor, event.shiftKey);
+                    if (handled) {
+                        event.preventDefault();
+                        return true;
+                    }
+                    return false;
+                }
                 if (currentEditor && isRichTextListContinuationShortcut(event) && isRichTextListActive(currentEditor)) {
                     const handled = applyRichTextListContinuation(currentEditor);
                     if (handled) {
@@ -1625,62 +2199,51 @@ function RichTextEditor({ value, onChange, onSubmit }: {
     );
 }
 
-export function shouldSyncRichTextEditorContent(currentValue: JSONContent, nextValue: JSONContent): boolean {
-    return JSON.stringify(currentValue) !== JSON.stringify(nextValue);
-}
+function insertRichTextLink(editor: Editor, range: { from: number; to: number }, linkTarget: RichTextLinkInsertTarget): boolean {
+    const commandChain = editor
+        .chain()
+        .focus()
+        .insertContentAt(range, {
+            type: "text",
+            text: linkTarget.label,
+            marks: [{ type: "link", attrs: { href: linkTarget.url } }]
+        });
 
-export function isRichTextSubmitShortcut(event: RichTextSubmitShortcutEvent): boolean {
-    return event.key === "Enter" && !event.shiftKey && !event.isComposing;
-}
-
-export function isRichTextListContinuationShortcut(event: RichTextListContinuationShortcutEvent): boolean {
-    return event.key === "Enter" && event.shiftKey && !event.isComposing;
-}
-
-export function isRichTextListActive(editor: Pick<Editor, "isActive">): boolean {
-    return editor.isActive("orderedList") || editor.isActive("bulletList");
-}
-
-export function applyRichTextListContinuation(editor: RichTextListCommandEditor): boolean {
-    return editor.commands.splitListItem("listItem") || editor.commands.liftListItem("listItem");
-}
-
-export function isEditableShortcutTarget(target: EventTarget | null): boolean {
-    if (!(target instanceof Element)) return false;
-    let element: Element | null = target;
-    while (element) {
-        if (element.matches("input, textarea, select")) return true;
-        if (element instanceof HTMLElement && (element.isContentEditable || element.contentEditable === "true" || element.getAttribute("contenteditable") === "")) return true;
-        element = element.parentElement;
-    }
-    return false;
-}
-
-export function keyboardShortcutFromEvent(event: ShortcutEvent, editableTarget: boolean): KeyboardShortcutAction | null {
-    if (event.key === "Escape") return { type: "close" };
-    if (event.metaKey && !event.shiftKey && !event.altKey && event.key === "/") return { type: "openHelp" };
-    if (editableTarget || !event.metaKey || event.altKey) return null;
-
-    if (!event.shiftKey && /^[1-9]$/.test(event.key)) {
-        return { type: "selectBoardByIndex", index: Number(event.key) - 1 };
+    if (linkTarget.selectLabel) {
+        commandChain.setTextSelection({ from: range.from, to: range.from + linkTarget.label.length });
     }
 
-    const key = event.key.toLowerCase();
-    if (!event.shiftKey && key === "b") return { type: "toggleBoardList" };
-    if (!event.shiftKey && key === "k") return { type: "setView", view: "kanban" };
-    if (!event.shiftKey && key === "l") return { type: "setView", view: "list" };
-    if (!event.shiftKey && key === "a") return { type: "setView", view: "archive" };
-    if (!event.shiftKey && key === "n") return { type: "createCard" };
-    if (event.shiftKey && key === "n") return { type: "createColumn" };
-    return null;
+    return commandChain.run();
 }
 
 function PriorityBadge({ priority }: { priority: KanbanPriority }): JSX.Element {
     return <span className={`kanban-priority priority-${priority}`}>{priority}</span>;
 }
 
+function RecurrenceBadge({ card, compact = false }: { card: KanbanCard; compact?: boolean }): JSX.Element | null {
+    if (!card.recurrence) return null;
+    const blocked = card.recurrence.status === "blocked";
+    const title = recurrenceSummary(card);
+    return (
+        <span className={`kanban-recurrence-badge ${blocked ? "blocked" : ""} ${compact ? "compact" : ""}`} title={title} aria-label={title}>
+            {blocked ? <AlertTriangle size={12} /> : <Repeat2 size={12} />}
+            {compact ? null : <span>{title}</span>}
+        </span>
+    );
+}
+
 function LabelChip({ label }: { label: KanbanLabel }): JSX.Element {
     return <span className="kanban-label-chip" style={{ borderColor: label.color, color: label.color }}>{label.name}</span>;
+}
+
+function recurrenceTriggerLabel(trigger: KanbanRecurrenceTrigger): string {
+    return trigger === "fixed" ? "固定时间" : "完成后";
+}
+
+function recurrenceCycleLabel(cycle: KanbanRecurrenceCycle): string {
+    if (cycle === "daily") return "每日";
+    if (cycle === "weekly") return "每周";
+    return "每月";
 }
 
 function cardDetailsSnapshot(value: {
@@ -1689,7 +2252,7 @@ function cardDetailsSnapshot(value: {
     priority: KanbanPriority;
     startDate: number | null;
     endDate: number | null;
-    descriptionJson?: KanbanRichTextDocument;
+    descriptionMarkdown: string;
     descriptionText: string;
     subtasks: KanbanSubtask[];
     comments: KanbanComment[];
@@ -1697,19 +2260,11 @@ function cardDetailsSnapshot(value: {
     return JSON.stringify(value);
 }
 
-function randomLabelColor(index: number): string {
-    return ["#756858", "#6f7a43", "#b36a3c", "#8f6f4f", "#9a5f54"][index % 5] ?? "#756858";
-}
-
 interface CalendarCell {
     day: number;
     month: number;
     year: number;
     otherMonth: boolean;
-}
-
-export function normalizeDateRange(startDate: number, endDate: number): { startDate: number; endDate: number } {
-    return startDate <= endDate ? { startDate, endDate } : { startDate: endDate, endDate: startDate };
 }
 
 function calendarCells(year: number, month: number): CalendarCell[] {
@@ -1746,10 +2301,6 @@ function formatDisplayDate(timestamp: number): string {
     return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function formatDisplayDateWithYear(timestamp: number): string {
-    return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-}
-
 function cardStartDate(card: KanbanCard): number | undefined {
     return card.startDate ?? card.dueDate;
 }
@@ -1760,21 +2311,6 @@ function cardEndDate(card: KanbanCard): number | undefined {
 
 function formatCardDateRange(card: KanbanCard): string {
     return formatDateRange(cardStartDate(card), cardEndDate(card));
-}
-
-export function formatDateRange(startDate?: number, endDate?: number): string {
-    if (startDate === undefined && endDate === undefined) return "No date";
-    const start = startDate ?? endDate;
-    const end = endDate ?? startDate;
-    if (start === undefined || end === undefined) return "No date";
-    if (start === end) return formatDisplayDate(start);
-
-    const startYear = new Date(start).getFullYear();
-    const endYear = new Date(end).getFullYear();
-    const currentYear = new Date().getFullYear();
-    if (startYear !== endYear) return `${formatDisplayDateWithYear(start)} - ${formatDisplayDateWithYear(end)}`;
-    if (endYear !== currentYear) return `${formatDisplayDate(start)} - ${formatDisplayDateWithYear(end)}`;
-    return `${formatDisplayDate(start)} - ${formatDisplayDate(end)}`;
 }
 
 function errorMessage(error: unknown): string {

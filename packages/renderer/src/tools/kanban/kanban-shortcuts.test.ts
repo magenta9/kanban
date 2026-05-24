@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isEditableShortcutTarget, keyboardShortcutFromEvent } from "./kanban";
+import { isEditableShortcutTarget, keyboardShortcutFromEvent } from "./kanban-helpers";
 
 function shortcutEvent(input: Partial<KeyboardEvent> & Pick<KeyboardEvent, "key">): Pick<KeyboardEvent, "key" | "metaKey" | "shiftKey" | "altKey"> {
     return {

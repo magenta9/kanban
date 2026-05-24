@@ -1,19 +1,62 @@
-import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from "electron";
 import { ipcChannels } from "@kanban/shared";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { openKanbanDatabase } from "./db/services";
 import { KanbanRepository } from "./db/repositories/kanban-repository";
+import { AiSettingsService } from "./ai/settings-service";
 import { resolveKanbanPaths } from "./storage/path-service";
 import { registerIpc } from "./ipc/register";
 
 let mainWindow: BrowserWindow | null = null;
+let recurrenceScanInterval: NodeJS.Timeout | null = null;
 const appName = "Kanban";
 const appIconPath = join(__dirname, "../../../build/icon.png");
 
 app.name = appName;
 app.setName(appName);
 app.setAboutPanelOptions({ applicationName: appName });
+
+function isExternalBrowserUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === "http:" || url.protocol === "https:";
+  }
+  catch {
+    return false;
+  }
+}
+
+function startRecurrenceScanner(repository: KanbanRepository): void {
+  const scan = () => {
+    try {
+      repository.generateDueRecurrences();
+    }
+    catch (caught) {
+      console.error("Failed to generate due recurrences", caught);
+    }
+  };
+  scan();
+  recurrenceScanInterval = setInterval(scan, 60_000);
+}
+
+function openExternalInBrowser(rawUrl: string): void {
+  if (!isExternalBrowserUrl(rawUrl)) {
+    return;
+  }
+
+  if (process.platform === "darwin") {
+    execFile("open", ["-a", "Google Chrome", rawUrl], (error) => {
+      if (error) {
+        void shell.openExternal(rawUrl);
+      }
+    });
+    return;
+  }
+
+  void shell.openExternal(rawUrl);
+}
 
 function configureApplicationMenu(): void {
   if (process.platform !== "darwin") {
@@ -48,6 +91,13 @@ function configureApplicationMenu(): void {
             const targetWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
             targetWindow?.webContents.send(ipcChannels.system.showKeyboardShortcuts);
           }
+        },
+        {
+          label: "AI Settings",
+          click: () => {
+            const targetWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+            targetWindow?.webContents.send(ipcChannels.system.showAiSettings);
+          }
         }
       ]
     }
@@ -64,7 +114,7 @@ async function createWindow(): Promise<void> {
     app.dock?.setIcon(appIconPath);
   }
 
-  mainWindow = new BrowserWindow({
+  const browserWindow = new BrowserWindow({
     width: 1280,
     height: 840,
     minWidth: 980,
@@ -81,17 +131,33 @@ async function createWindow(): Promise<void> {
     }
   });
 
-  mainWindow.on("closed", () => {
+  mainWindow = browserWindow;
+
+  browserWindow.on("closed", () => {
     mainWindow = null;
   });
 
+  browserWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalInBrowser(url);
+    return { action: "deny" };
+  });
+
+  browserWindow.webContents.on("will-navigate", (event, url) => {
+    if (url === browserWindow.webContents.getURL()) {
+      return;
+    }
+
+    event.preventDefault();
+    openExternalInBrowser(url);
+  });
+
   if (!app.isPackaged) {
-    await mainWindow.loadURL(process.env.KANBAN_RENDERER_URL ?? "http://localhost:5173");
-    mainWindow.webContents.openDevTools({ mode: "detach" });
+    await browserWindow.loadURL(process.env.KANBAN_RENDERER_URL ?? "http://localhost:5173");
+    browserWindow.webContents.openDevTools({ mode: "detach" });
     return;
   }
 
-  await mainWindow.loadFile(join(__dirname, "../../renderer/dist/index.html"));
+  await browserWindow.loadFile(join(__dirname, "../../renderer/dist/index.html"));
 }
 
 app.whenReady().then(async () => {
@@ -100,11 +166,22 @@ app.whenReady().then(async () => {
   const paths = resolveKanbanPaths();
   mkdirSync(paths.root, { recursive: true });
   const database = openKanbanDatabase(paths.databasePath);
+  const kanbanRepository = new KanbanRepository(database);
+  const aiSettings = new AiSettingsService({ settingsPath: paths.aiSettingsPath, logPath: paths.aiLogPath });
   registerIpc({
-    kanban: new KanbanRepository(database)
+    kanban: kanbanRepository,
+    ai: aiSettings
   });
+  startRecurrenceScanner(kanbanRepository);
 
   await createWindow();
+});
+
+app.on("before-quit", () => {
+  if (recurrenceScanInterval) {
+    clearInterval(recurrenceScanInterval);
+    recurrenceScanInterval = null;
+  }
 });
 
 app.on("window-all-closed", () => {
