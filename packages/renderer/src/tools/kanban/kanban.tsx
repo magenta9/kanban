@@ -11,7 +11,7 @@ import {
     type DragOverEvent,
     type DragStartEvent
 } from "@dnd-kit/core";
-import { arrayMove, horizontalListSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { horizontalListSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -46,6 +46,8 @@ import {
 } from "lucide-react";
 import { getApi } from "../../api";
 import { IconButton, SegmentedControl } from "../../components/tool-layout";
+import { useCardEditingState } from "./card-edit-state";
+import { useDraftCardState } from "./draft-card-state";
 import {
     applyRichTextListContinuation,
     applyRichTextListIndentation,
@@ -165,8 +167,7 @@ export function KanbanPage(): JSX.Element {
     const [view, setView] = useState<ViewMode>("kanban");
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [draftCardTitles, setDraftCardTitles] = useState<Record<string, string>>({});
-    const [activeComposerColumnId, setActiveComposerColumnId] = useState<string>("");
+    const draftCard = useDraftCardState();
     const [textDialog, setTextDialog] = useState<TextDialogState | null>(null);
     const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
     const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -174,7 +175,6 @@ export function KanbanPage(): JSX.Element {
     const [boardListCollapsed, setBoardListCollapsed] = useState(false);
     const [helpOpen, setHelpOpen] = useState(false);
     const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
-    const composerInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -314,40 +314,22 @@ export function KanbanPage(): JSX.Element {
         }
     }
 
-    function setDraftCardTitle(columnId: string, value: string): void {
-        setDraftCardTitles((current) => ({ ...current, [columnId]: value }));
-    }
-
-    function setComposerInputRef(columnId: string, node: HTMLInputElement | null): void {
-        composerInputRefs.current[columnId] = node;
-    }
-
-    function focusComposer(columnId: string): void {
-        window.requestAnimationFrame(() => composerInputRefs.current[columnId]?.focus());
-    }
-
     function openCardComposerFromShortcut(): void {
         if (!selectedBoardId) return;
-        const selectedCardColumnId = selectedCard && visibleColumns.some((column) => column.id === selectedCard.columnId) ? selectedCard.columnId : "";
-        const activeComposerColumnIdIsVisible = activeComposerColumnId && visibleColumns.some((column) => column.id === activeComposerColumnId);
-        const targetColumnId = selectedCardColumnId || (activeComposerColumnIdIsVisible ? activeComposerColumnId : "") || visibleColumns[0]?.id;
+        const targetColumnId = draftCard.openFromShortcut({ selectedCard, visibleColumns });
         if (!targetColumnId) return;
         setSelectedCardId("");
-        setActiveComposerColumnId(targetColumnId);
-        focusComposer(targetColumnId);
     }
 
     async function createCard(columnId: string): Promise<void> {
         if (!selectedBoardId) return;
-        const title = draftCardTitles[columnId]?.trim();
-        if (!title) return;
         try {
-            const card = await getApi().kanban.createCard({ boardId: selectedBoardId, columnId, title });
-            setDraftCardTitles((current) => ({ ...current, [columnId]: "" }));
-            setActiveComposerColumnId("");
-            await loadBoardData(selectedBoardId);
-            setSelectedCardId(card.id);
-            setError(null);
+            await draftCard.submit(columnId, async (title) => {
+                const card = await getApi().kanban.createCard({ boardId: selectedBoardId, columnId, title });
+                await loadBoardData(selectedBoardId);
+                setSelectedCardId(card.id);
+                setError(null);
+            });
         } catch (caught) {
             setError(errorMessage(caught));
         }
@@ -470,10 +452,9 @@ export function KanbanPage(): JSX.Element {
                     event.preventDefault();
                     setConfirmDialog(null);
                 }
-                else if (activeComposerColumnId) {
+                else if (draftCard.activeColumnId) {
                     event.preventDefault();
-                    setDraftCardTitle(activeComposerColumnId, "");
-                    setActiveComposerColumnId("");
+                    draftCard.close();
                 }
                 else if (selectedCardId) {
                     event.preventDefault();
@@ -515,7 +496,7 @@ export function KanbanPage(): JSX.Element {
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [activeComposerColumnId, boards, confirmDialog, helpOpen, selectedBoardId, selectedCard, selectedCardId, textDialog, visibleColumns]);
+    }, [boards, confirmDialog, draftCard, helpOpen, selectedBoardId, selectedCard, selectedCardId, textDialog, visibleColumns]);
 
     async function handleDragEnd(event: DragEndEvent): Promise<void> {
         try {
@@ -655,12 +636,12 @@ export function KanbanPage(): JSX.Element {
                                                 completionColumnId={selectedBoard.completionColumnId}
                                                 cards={activeCards.filter((card) => card.columnId === column.id).sort((left, right) => left.sortOrder - right.sortOrder)}
                                                 labels={labels}
-                                                draftTitle={draftCardTitles[column.id] ?? ""}
-                                                composerOpen={activeComposerColumnId === column.id}
-                                                composerInputRef={(node) => setComposerInputRef(column.id, node)}
-                                                onDraftTitleChange={(value) => setDraftCardTitle(column.id, value)}
-                                                onOpenComposer={() => setActiveComposerColumnId(column.id)}
-                                                onCloseComposer={() => { setDraftCardTitle(column.id, ""); setActiveComposerColumnId(""); }}
+                                                draftTitle={draftCard.titleForColumn(column.id)}
+                                                composerOpen={draftCard.isComposerOpen(column.id)}
+                                                composerInputRef={(node) => draftCard.setInputRef(column.id, node)}
+                                                onDraftTitleChange={(value) => draftCard.setTitle(column.id, value)}
+                                                onOpenComposer={() => draftCard.open(column.id)}
+                                                onCloseComposer={draftCard.close}
                                                 onCreateCard={() => void createCard(column.id)}
                                                 onOpenCard={setSelectedCardId}
                                                 onArchiveCard={(cardId) => void archiveCard(cardId)}
@@ -1431,20 +1412,34 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
     onCreateLabel: (card: KanbanCard, name: string) => Promise<void>;
     onToggleLabel: (card: KanbanCard, labelId: string) => Promise<void>;
 }): JSX.Element {
-    const [title, setTitle] = useState(card.title);
-    const [columnId, setColumnId] = useState(card.columnId);
-    const [priority, setPriority] = useState<KanbanPriority>(card.priority);
-    const [startDate, setStartDate] = useState<number | null>(cardStartDate(card) ?? null);
-    const [endDate, setEndDate] = useState<number | null>(cardEndDate(card) ?? null);
-    const [descriptionMarkdown, setDescriptionMarkdown] = useState(card.descriptionMarkdown ?? card.descriptionText ?? "");
-    const [descriptionText, setDescriptionText] = useState(card.descriptionText ?? "");
-    const [subtasks, setSubtasks] = useState<KanbanSubtask[]>(card.subtasks);
-    const [comments, setComments] = useState<KanbanComment[]>(card.comments);
+    const {
+        title,
+        columnId,
+        priority,
+        startDate,
+        endDate,
+        descriptionMarkdown,
+        descriptionText,
+        subtasks,
+        comments,
+        setTitle,
+        setColumnId,
+        setPriority,
+        setStartDate,
+        setEndDate,
+        setDescriptionMarkdown,
+        setDescriptionText,
+        addSubtask: addEditedSubtask,
+        updateSubtask,
+        deleteSubtask,
+        reorderSubtask,
+        addComment: addEditedComment,
+        deleteComment
+    } = useCardEditingState({ card, onSave });
     const [subtaskDraft, setSubtaskDraft] = useState("");
     const [commentDraft, setCommentDraft] = useState("");
     const [tagDraft, setTagDraft] = useState("");
     const [tagEditorOpen, setTagEditorOpen] = useState(false);
-    const lastSavedSnapshot = useRef("");
     const selectedColumn = columns.find((column) => column.id === columnId);
     const labelSuggestions = useMemo(() => tagEditorOpen ? suggestBoardLabelsByPrefix(labels, card.labelIds, tagDraft, 5) : [], [tagEditorOpen, labels, card.labelIds, tagDraft]);
     const aiContext = useMemo(() => cardAiContext({
@@ -1465,101 +1460,24 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
     );
 
     useEffect(() => {
-        setTitle(card.title);
-        setColumnId(card.columnId);
-        setPriority(card.priority);
-        setStartDate(cardStartDate(card) ?? null);
-        setEndDate(cardEndDate(card) ?? null);
-        setDescriptionMarkdown(card.descriptionMarkdown ?? card.descriptionText ?? "");
-        setDescriptionText(card.descriptionText ?? "");
-        setSubtasks(card.subtasks);
-        setComments(card.comments);
-        lastSavedSnapshot.current = cardDetailsSnapshot({
-            title: card.title,
-            columnId: card.columnId,
-            priority: card.priority,
-            startDate: cardStartDate(card) ?? null,
-            endDate: cardEndDate(card) ?? null,
-            descriptionMarkdown: card.descriptionMarkdown ?? card.descriptionText ?? "",
-            descriptionText: card.descriptionText ?? "",
-            subtasks: card.subtasks,
-            comments: card.comments
-        });
-    }, [card.id]);
-
-    useEffect(() => {
         setSubtaskDraft("");
         setCommentDraft("");
         setTagDraft("");
         setTagEditorOpen(false);
     }, [card.id]);
 
-    useEffect(() => {
-        const snapshot = cardDetailsSnapshot({ title, columnId, priority, startDate, endDate, descriptionMarkdown, descriptionText, subtasks, comments });
-        if (!lastSavedSnapshot.current) {
-            lastSavedSnapshot.current = snapshot;
-            return;
-        }
-        if (snapshot === lastSavedSnapshot.current) return;
-        const timeout = window.setTimeout(() => {
-            lastSavedSnapshot.current = snapshot;
-            void onSave(card.id, {
-                title,
-                columnId,
-                priority,
-                startDate,
-                endDate,
-                descriptionMarkdown,
-                descriptionText,
-                subtasks,
-                comments
-            }).catch(() => {
-                lastSavedSnapshot.current = "";
-            });
-        }, 650);
-        return () => window.clearTimeout(timeout);
-    }, [card.id, title, columnId, priority, startDate, endDate, descriptionMarkdown, descriptionText, subtasks, comments, onSave]);
-
     function addSubtask(): void {
-        const nextTitle = subtaskDraft.trim();
-        if (!nextTitle) return;
-        const now = Date.now();
-        setSubtasks((current) => [...current, { id: crypto.randomUUID(), title: nextTitle, completed: false, createdAt: now, updatedAt: now }]);
-        setSubtaskDraft("");
-    }
-
-    function updateSubtask(id: string, patch: Partial<Pick<KanbanSubtask, "title" | "completed">>): void {
-        const now = Date.now();
-        setSubtasks((current) => current.map((item) => item.id === id ? { ...item, ...patch, updatedAt: now } : item));
-    }
-
-    function deleteSubtask(id: string): void {
-        setSubtasks((current) => current.filter((item) => item.id !== id));
+        if (addEditedSubtask(subtaskDraft)) setSubtaskDraft("");
     }
 
     function handleSubtaskDragEnd(event: DragEndEvent): void {
         const activeId = String(event.active.id);
         const overId = event.over ? String(event.over.id) : "";
-        if (!overId || activeId === overId) return;
-        setSubtasks((current) => {
-            const oldIndex = current.findIndex((item) => item.id === activeId);
-            const newIndex = current.findIndex((item) => item.id === overId);
-            if (oldIndex < 0 || newIndex < 0) return current;
-            const now = Date.now();
-            return arrayMove(current, oldIndex, newIndex).map((item) => item.id === activeId ? { ...item, updatedAt: now } : item);
-        });
+        reorderSubtask(activeId, overId);
     }
 
     function addComment(draft = commentDraft): void {
-        const body = draft.trim();
-        if (!body) return;
-        const now = Date.now();
-        setComments((current) => [...current, { id: crypto.randomUUID(), body, createdAt: now, updatedAt: now }]);
-        setCommentDraft("");
-    }
-
-    function deleteComment(id: string): void {
-        setComments((current) => current.filter((item) => item.id !== id));
+        if (addEditedComment(draft)) setCommentDraft("");
     }
 
     function createTag(): void {
@@ -2251,20 +2169,6 @@ function recurrenceCycleLabel(cycle: KanbanRecurrenceCycle): string {
     if (cycle === "daily") return "每日";
     if (cycle === "weekly") return "每周";
     return "每月";
-}
-
-function cardDetailsSnapshot(value: {
-    title: string;
-    columnId: string;
-    priority: KanbanPriority;
-    startDate: number | null;
-    endDate: number | null;
-    descriptionMarkdown: string;
-    descriptionText: string;
-    subtasks: KanbanSubtask[];
-    comments: KanbanComment[];
-}): string {
-    return JSON.stringify(value);
 }
 
 interface CalendarCell {

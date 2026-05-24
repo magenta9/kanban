@@ -1,4 +1,4 @@
-import type { AiLabelSuggestion, AiLabelSuggestionInput, AiLabelSuggestionResult, AiLogPrompt, AiTextSuggestionField, AiTextSuggestionInput, AiTextSuggestionResult } from "@kanban/shared";
+import type { AiLabelSuggestion, AiLabelSuggestionInput, AiLabelSuggestionResult, AiLogPrompt, AiTextSuggestionDecision, AiTextSuggestionDecisionReason, AiTextSuggestionField, AiTextSuggestionInput, AiTextSuggestionResult } from "@kanban/shared";
 import { buildLabelMessages, buildTextPromptInput, buildTextSystemPrompt, labelSuggestionOutputSchema, normalizeLabelName as normalizeContractLabelName, textMaxTokens, textSuggestionOutputSchema } from "./suggestion-contract";
 import { chatCompletionHeaders, ollamaChatBody, ollamaChatUrl, responseErrorDetail, type AiSettingsService } from "./settings-service";
 
@@ -9,6 +9,11 @@ interface OllamaChatResponse {
 interface CompletionResult {
     content: string;
     statusCode: number;
+}
+
+interface InsertionResolution {
+    suggestion: string;
+    emptyReason?: AiTextSuggestionDecisionReason;
 }
 
 class CompletionError extends Error {
@@ -28,7 +33,8 @@ export class AiSuggestionService {
         const scope = `suggestText:${input.field}`;
         const scenario = textSuggestionScenario(input.field);
         if (!state.enabled || !state.configured) {
-            this.settings.recordEvent({ level: "warn", scope, scenario, event: "skipped", message: "AI text suggestion skipped: settings are disabled or incomplete." });
+            const decision = textSuggestionDecision("skipped", "settings_unavailable");
+            this.settings.recordEvent({ level: "warn", scope, scenario, event: "skipped", decision, message: "AI text suggestion skipped: settings are disabled or incomplete." });
             return {};
         }
 
@@ -42,7 +48,8 @@ export class AiSuggestionService {
         const promptChars = promptCharCount(messages);
         const emptyReason = requestedEmptyCompletionReason(promptInput);
         if (emptyReason) {
-            this.settings.recordEvent({ level: "info", scope, scenario, event: "skipped", prompt, message: `AI text suggestion skipped: ${emptyReason}.`, durationMs: Date.now() - startedAt, promptChars });
+            const decision = textSuggestionDecision("skipped", promptEmptyDecisionReason(input.field, emptyReason), emptyReason);
+            this.settings.recordEvent({ level: "info", scope, scenario, event: "skipped", prompt, decision, message: `AI text suggestion skipped: ${emptyReason}.`, durationMs: Date.now() - startedAt, promptChars });
             return {};
         }
         try {
@@ -55,13 +62,14 @@ export class AiSuggestionService {
             });
             const durationMs = Date.now() - startedAt;
             const content = result.content;
-            const { normalized, suggestion } = resolveTextSuggestion(content, input);
+            const { normalized, suggestion, decision } = resolveTextSuggestion(content, input);
             if (suggestion) {
                 this.settings.recordEvent({
                     level: "info",
                     scope,
                     scenario,
                     event: "success",
+                    decision,
                     message: `AI text suggestion completed: ${[...suggestion].length} characters.`,
                     statusCode: result.statusCode,
                     durationMs,
@@ -70,10 +78,12 @@ export class AiSuggestionService {
                 });
                 return { suggestion };
             }
-            this.settings.recordEvent({ level: "warn", scope, scenario, event: "discarded", prompt, message: textSuggestionDiscardMessage(content, normalized, suggestion), statusCode: result.statusCode, durationMs, promptChars, outputChars: textCharCount(content) });
+            this.settings.recordEvent({ level: "warn", scope, scenario, event: "discarded", prompt, decision, message: textSuggestionDiscardMessage(content, normalized, suggestion), statusCode: result.statusCode, durationMs, promptChars, outputChars: textCharCount(content) });
         }
         catch (caught) {
-            this.settings.recordError({ scope, scenario, event: "error", prompt, message: errorMessage(caught), ...errorStatusCode(caught), durationMs: Date.now() - startedAt, promptChars });
+            const message = errorMessage(caught);
+            const decision = textSuggestionDecision("failed", "provider_error", message);
+            this.settings.recordError({ scope, scenario, event: "error", prompt, decision, message, ...errorStatusCode(caught), durationMs: Date.now() - startedAt, promptChars });
             return {};
         }
         return {};
@@ -161,20 +171,34 @@ export function normalizeTextSuggestion(value: string, _field?: AiTextSuggestion
 export function resolveTextSuggestion(raw: string, input: AiTextSuggestionInput): {
     normalized: string;
     suggestion: string;
+    decision: AiTextSuggestionDecision;
 } {
     const normalized = normalizeTextSuggestion(raw, input.field);
-    const suggestion = normalizeInsertionSuggestion(normalized, input.textBeforeCursor, input.textAfterCursor);
+    const resolved = resolveInsertionSuggestion(normalized, input.textBeforeCursor, input.textAfterCursor, input.field);
     return {
         normalized,
-        suggestion
+        suggestion: resolved.suggestion,
+        decision: textSuggestionResolutionDecision(raw, normalized, resolved)
     };
 }
 
 export function normalizeInsertionSuggestion(value: string, textBeforeCursor: string, textAfterCursor: string): string {
+    return resolveInsertionSuggestion(value, textBeforeCursor, textAfterCursor).suggestion;
+}
+
+function resolveInsertionSuggestion(value: string, textBeforeCursor: string, textAfterCursor: string, field?: AiTextSuggestionField): InsertionResolution {
     const withoutLeadingOverlap = stripLeadingOverlap(value.trim(), textBeforeCursor);
+    if (value.trim() && !withoutLeadingOverlap.trim()) return { suggestion: "", emptyReason: "cursor_context_repeated" };
+
     const withoutTrailingOverlap = stripTrailingOverlap(withoutLeadingOverlap, textAfterCursor);
+    if (withoutLeadingOverlap.trim() && !withoutTrailingOverlap.trim()) return { suggestion: "", emptyReason: "cursor_context_repeated" };
+
     const withoutTrailingDuplicate = stripTrailingDuplicateSuffixLine(withoutTrailingOverlap, textAfterCursor);
-    return stripRepeatedNearbyInsertion(withoutTrailingDuplicate, textBeforeCursor, textAfterCursor).trim();
+    if (withoutTrailingOverlap.trim() && !withoutTrailingDuplicate.trim()) return { suggestion: "", emptyReason: duplicateContextReason(field) };
+
+    const withoutRepeatedNearby = stripRepeatedNearbyInsertion(withoutTrailingDuplicate, textBeforeCursor, textAfterCursor).trim();
+    if (withoutTrailingDuplicate.trim() && !withoutRepeatedNearby.trim()) return { suggestion: "", emptyReason: duplicateContextReason(field) };
+    return { suggestion: withoutRepeatedNearby };
 }
 
 export function normalizeLabelSuggestions(raw: string, maxSuggestions: number, boardLabels: Array<{ id: string; name: string }>, attachedLabelIds: string[]): AiLabelSuggestion[] {
@@ -257,6 +281,28 @@ function textSuggestionDiscardMessage(raw: string, normalized: string, suggestio
     if (!normalized.trim()) return "AI suggestion discarded: content only contained reasoning or formatting.";
     if (!suggestion.trim()) return "AI suggestion discarded: content repeated cursor context.";
     return "AI suggestion discarded: content became empty after cursor-fit normalization.";
+}
+
+function textSuggestionResolutionDecision(raw: string, normalized: string, resolved: InsertionResolution): AiTextSuggestionDecision {
+    if (resolved.suggestion.trim()) return textSuggestionDecision("accepted", "accepted");
+    if (!raw.trim()) return textSuggestionDecision("discarded", "provider_empty_content");
+    if (!normalized.trim()) return textSuggestionDecision("discarded", "structured_output_empty");
+    if (resolved.emptyReason) return textSuggestionDecision("discarded", resolved.emptyReason);
+    return textSuggestionDecision("discarded", "cursor_fit_empty");
+}
+
+function duplicateContextReason(field?: AiTextSuggestionField): AiTextSuggestionDecisionReason {
+    return field === "description" ? "description_duplicate_context" : "cursor_context_repeated";
+}
+
+function textSuggestionDecision(status: AiTextSuggestionDecision["status"], reason: AiTextSuggestionDecisionReason, detail?: string): AiTextSuggestionDecision {
+    return detail ? { status, reason, detail } : { status, reason };
+}
+
+function promptEmptyDecisionReason(field: AiTextSuggestionField, detail: string): AiTextSuggestionDecisionReason {
+    if (field === "subtask" && detail === "subtask prefix would duplicate a sibling subtask") return "subtask_duplicate_context";
+    if (field === "comment" && detail === "comment intent is too ambiguous for a grounded completion") return "comment_intent_ambiguous";
+    return "prompt_return_empty";
 }
 
 function stripModelReasoning(value: string): string {

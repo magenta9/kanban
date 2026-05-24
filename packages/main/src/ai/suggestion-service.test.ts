@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { AiTextSuggestionInput, KanbanCard } from "@kanban/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AiSettingsService } from "./settings-service";
-import { AiSuggestionService, normalizeInsertionSuggestion, normalizeLabelName, normalizeLabelSuggestions, normalizeSuggestion, normalizeTextSuggestion } from "./suggestion-service";
+import { AiSuggestionService, normalizeInsertionSuggestion, normalizeLabelName, normalizeLabelSuggestions, normalizeSuggestion, normalizeTextSuggestion, resolveTextSuggestion } from "./suggestion-service";
 
 let tempRoots: string[] = [];
 
@@ -59,6 +59,22 @@ describe("AI text suggestion normalization", () => {
         expect(normalizeInsertionSuggestion("先整理出流程文章，然后再思考怎么弄成agent定时执行", "先整理出流程文章，然后再思考怎么弄成agent定时执行\n如果", "")).toBe("");
         expect(normalizeInsertionSuggestion("观察小级别\n先整理出流程文章，然后再思考怎么弄成 agent 定时执行", "先整理出流程文章，然后再思考怎么弄成agent定时执行\n\n优化趋势交易信号\n\n1. 1w、2w同向方向一致才是方向一致\n2. 寻找其他趋势线\n方案3:", "")).toBe("观察小级别");
         expect(normalizeInsertionSuggestion("风险复核\n风险复核", "", "")).toBe("风险复核");
+    });
+
+    it("returns stable decision reasons for accepted and discarded inserts", () => {
+        const input: AiTextSuggestionInput = {
+            field: "description",
+            textBeforeCursor: "复盘",
+            textAfterCursor: "",
+            maxChars: 20,
+            context: { relatedCards: [], boardLabels: [] }
+        };
+
+        expect(resolveTextSuggestion('{"insert":"持有标的"}', input).decision).toEqual({ status: "accepted", reason: "accepted" });
+        expect(resolveTextSuggestion('', input).decision).toEqual({ status: "discarded", reason: "provider_empty_content" });
+        expect(resolveTextSuggestion('plain text', input).decision).toEqual({ status: "discarded", reason: "structured_output_empty" });
+        expect(resolveTextSuggestion('{"insert":"复盘"}', input).decision).toEqual({ status: "discarded", reason: "cursor_context_repeated" });
+        expect(resolveTextSuggestion('{"insert":"风险复核测试结论"}', { ...input, textBeforeCursor: "风险复核测试结论\n下一步：" }).decision).toEqual({ status: "discarded", reason: "description_duplicate_context" });
     });
 });
 
@@ -300,8 +316,9 @@ describe("AI text suggestions", () => {
             }
         })).resolves.toEqual({});
 
-        const entry = JSON.parse(readFileSync(join(root, "ai.log"), "utf8").trim()) as { event: string; message: string; promptChars?: number; outputChars?: number };
+        const entry = JSON.parse(readFileSync(join(root, "ai.log"), "utf8").trim()) as { event: string; message: string; promptChars?: number; outputChars?: number; decision?: { status: string; reason: string } };
         expect(entry.event).toBe("discarded");
+        expect(entry.decision).toEqual({ status: "discarded", reason: "cursor_context_repeated" });
         expect(entry.message).toContain("content repeated cursor context");
         expect(entry.promptChars).toEqual(expect.any(Number));
         expect(entry.outputChars).toEqual(expect.any(Number));
@@ -449,8 +466,10 @@ describe("AI prompt contracts", () => {
         })).resolves.toEqual({});
 
         expect(fetch).not.toHaveBeenCalled();
-        const entry = JSON.parse(readFileSync(join(root, "ai.log"), "utf8").trim()) as { event: string; message: string; prompt: { messages: [{ content: string }, { content: string }] } };
+        const entry = JSON.parse(readFileSync(join(root, "ai.log"), "utf8").trim()) as { event: string; message: string; decision?: { status: string; reason: string; detail?: string }; prompt: { messages: [{ content: string }, { content: string }] } };
         expect(entry.event).toBe("skipped");
+        expect(entry.decision).toMatchObject({ status: "skipped", reason: "prompt_return_empty" });
+        expect(entry.decision?.detail).toContain("bare numbered-list item would likely duplicate previous list items");
         expect(entry.message).toContain("bare numbered-list item would likely duplicate previous list items");
         expect(entry.prompt.messages[0].content).toContain("previousListItems as style context only");
         expect(entry.prompt.messages[0].content).toContain("current marker or label");
@@ -653,12 +672,39 @@ describe("AI prompt contracts", () => {
         })).resolves.toEqual({});
 
         expect(fetch).not.toHaveBeenCalled();
-        const entry = JSON.parse(readFileSync(join(root, "ai.log"), "utf8").trim()) as { event: string; message: string; prompt: { messages: [{ content: string }, { content: string }] } };
+        const entry = JSON.parse(readFileSync(join(root, "ai.log"), "utf8").trim()) as { event: string; message: string; decision?: { status: string; reason: string; detail?: string }; prompt: { messages: [{ content: string }, { content: string }] } };
         expect(entry.event).toBe("skipped");
+        expect(entry.decision).toMatchObject({ status: "skipped", reason: "subtask_duplicate_context" });
+        expect(entry.decision?.detail).toBe("subtask prefix would duplicate a sibling subtask");
         expect(entry.message).toContain("subtask prefix would duplicate a sibling subtask");
         expect(JSON.parse(entry.prompt.messages[1].content)).toMatchObject({
             scenario: "subtask",
             completionDecision: { returnEmpty: true, reason: "subtask prefix would duplicate a sibling subtask" }
+        });
+    });
+
+    it("skips model calls for ambiguous comment intent with a grounding decision reason", async () => {
+        const { root, settings, suggestions } = createAiServices();
+        settings.saveSettings({ enabled: true, baseUrl: "http://localhost:11434/v1", model: "llama3.2" });
+        const fetch = vi.fn();
+        vi.stubGlobal("fetch", fetch);
+
+        await expect(suggestions.suggestText({
+            field: "comment",
+            textBeforeCursor: "嗯",
+            textAfterCursor: "",
+            maxChars: 20,
+            context: { currentCard: testCard({ title: "设计确认" }), relatedCards: [], boardLabels: [] }
+        })).resolves.toEqual({});
+
+        expect(fetch).not.toHaveBeenCalled();
+        const entry = JSON.parse(readFileSync(join(root, "ai.log"), "utf8").trim()) as { event: string; message: string; decision?: { status: string; reason: string; detail?: string }; prompt: { messages: [{ content: string }, { content: string }] } };
+        expect(entry.event).toBe("skipped");
+        expect(entry.decision).toMatchObject({ status: "skipped", reason: "comment_intent_ambiguous" });
+        expect(entry.decision?.detail).toBe("comment intent is too ambiguous for a grounded completion");
+        expect(JSON.parse(entry.prompt.messages[1].content)).toMatchObject({
+            scenario: "comment",
+            completionDecision: { returnEmpty: true, reason: "comment intent is too ambiguous for a grounded completion" }
         });
     });
 

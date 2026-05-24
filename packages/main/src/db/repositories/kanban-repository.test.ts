@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { migrate } from "../schema";
 import { KanbanRepository, orderBetween } from "./kanban-repository";
+import { unavailableCompletionColumnReason } from "./recurrence-lifecycle";
 
 function createRepository(): KanbanRepository {
     const database = new Database(":memory:");
@@ -69,6 +70,38 @@ describe("KanbanRepository", () => {
 
         repository.restoreCard({ id: card.id });
         expect(repository.listCards({ boardId: board.id })).toHaveLength(1);
+    });
+
+    it("lists only labels used by active cards", () => {
+        const repository = createRepository();
+        const board = repository.createBoard({ name: "Launch" });
+        const [backlog] = repository.listColumns({ boardId: board.id });
+        const activeCard = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Active" });
+        const archivedCard = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Archived" });
+        const mixedCard = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Mixed" });
+        const unusedLabel = repository.createLabel({ boardId: board.id, name: "Unused", color: "#64748b" });
+        const activeLabel = repository.createLabel({ boardId: board.id, name: "Active", color: "#2563eb" });
+        const archivedOnlyLabel = repository.createLabel({ boardId: board.id, name: "Archived only", color: "#f97316" });
+        const mixedLabel = repository.createLabel({ boardId: board.id, name: "Mixed", color: "#16a34a" });
+
+        repository.setCardLabels({ cardId: activeCard.id, labelIds: [activeLabel.id, mixedLabel.id] });
+        repository.setCardLabels({ cardId: archivedCard.id, labelIds: [archivedOnlyLabel.id, mixedLabel.id] });
+        repository.setCardLabels({ cardId: mixedCard.id, labelIds: [mixedLabel.id] });
+        repository.archiveCard({ id: archivedCard.id });
+
+        expect(repository.listLabels({ boardId: board.id }).map((label) => label.name)).toEqual(["Active", "Mixed"]);
+
+        repository.archiveCard({ id: activeCard.id });
+        expect(repository.listLabels({ boardId: board.id }).map((label) => label.name)).toEqual(["Mixed"]);
+
+        repository.archiveCard({ id: mixedCard.id });
+        expect(repository.listLabels({ boardId: board.id })).toHaveLength(0);
+
+        repository.restoreCard({ id: archivedCard.id });
+        expect(repository.listLabels({ boardId: board.id }).map((label) => label.name)).toEqual(["Archived only", "Mixed"]);
+
+        repository.setCardLabels({ cardId: archivedCard.id, labelIds: [unusedLabel.id] });
+        expect(repository.listLabels({ boardId: board.id }).map((label) => label.name)).toEqual(["Unused"]);
     });
 
     it("persists card markdown descriptions, subtasks, and comments", () => {
@@ -168,6 +201,53 @@ describe("KanbanRepository", () => {
         expect(nextCard).toMatchObject({ title: "Review notes", columnId: backlog!.id });
         expect(nextCard?.recurrence).toMatchObject({ trigger: "completion", cycle: "daily", status: "active" });
         expect(nextCard?.subtasks[0]).toMatchObject({ title: "Read", completed: false });
+    });
+
+    it("blocks completion recurrence when the completion column is archived", () => {
+        const repository = createRepository();
+        const board = repository.createBoard({ name: "Habits" });
+        const [backlog, , , done] = repository.listColumns({ boardId: board.id });
+        const card = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Review notes" });
+        repository.enableCardRecurrence({ cardId: card.id, trigger: "completion", cycle: "daily" });
+
+        repository.archiveColumn({ id: done!.id });
+        repository.updateCard({ id: card.id, patch: { columnId: done!.id } });
+
+        const cards = repository.listCards({ boardId: board.id });
+        expect(cards).toHaveLength(1);
+        expect(cards[0]?.recurrence).toMatchObject({
+            trigger: "completion",
+            cycle: "daily",
+            status: "blocked",
+            blockedReason: unavailableCompletionColumnReason
+        });
+    });
+
+    it("does not update the Series Template when an old Occurrence is edited after Baton handoff", () => {
+        const repository = createRepository();
+        const board = repository.createBoard({ name: "Habits" });
+        const [backlog, , , done] = repository.listColumns({ boardId: board.id });
+        const originalCard = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Review notes" });
+        repository.updateCard({
+            id: originalCard.id,
+            patch: { subtasks: [{ id: "subtask-1", title: "Read", completed: true, createdAt: 1, updatedAt: 1 }] }
+        });
+        repository.enableCardRecurrence({ cardId: originalCard.id, trigger: "completion", cycle: "daily" });
+        repository.updateCard({ id: originalCard.id, patch: { columnId: done!.id } });
+        const nextCard = repository.listCards({ boardId: board.id }).find((item) => item.id !== originalCard.id)!;
+
+        repository.updateCard({
+            id: originalCard.id,
+            patch: {
+                title: "Edited old occurrence",
+                subtasks: [{ id: "subtask-2", title: "Do not carry forward", completed: true, createdAt: 2, updatedAt: 2 }]
+            }
+        });
+        repository.updateCard({ id: nextCard.id, patch: { columnId: done!.id } });
+
+        const newestCard = repository.listCards({ boardId: board.id }).find((item) => item.id !== originalCard.id && item.id !== nextCard.id);
+        expect(newestCard).toMatchObject({ title: "Review notes", columnId: backlog!.id });
+        expect(newestCard?.subtasks[0]).toMatchObject({ title: "Read", completed: false });
     });
 
     it("generates only the latest seven missed fixed-time occurrences", () => {

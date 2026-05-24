@@ -2,7 +2,7 @@
 
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import type { AiTextSuggestionField, AiTextSuggestionInput } from "@kanban/shared";
+import type { AiTextSuggestionDecision, AiTextSuggestionField, AiTextSuggestionInput } from "@kanban/shared";
 import { aiCompletionFixtures, type AiCompletionFixture } from "./ai-completion-fixtures";
 import {
     blockedDescriptionInsertions,
@@ -52,6 +52,7 @@ interface EvalResult {
     pass: boolean;
     raw: string;
     insertion: string;
+    completionDecision: AiTextSuggestionDecision;
     diagnostics: Record<string, boolean>;
     review: {
         raw: string;
@@ -181,6 +182,7 @@ async function evaluateFixture(options: CliOptions, fixture: AiCompletionFixture
         pass: score >= passScore,
         raw,
         insertion,
+        completionDecision: resolved.decision,
         diagnostics,
         review
     };
@@ -669,7 +671,7 @@ async function main(): Promise<void> {
             const result = await evaluateFixture(options, fixture, variant);
             results.push(result);
             if (!options.json) {
-                console.log(`${results.length}/${fixtures.length * 2} ${result.id}:${variant} stars=${result.stars} score=${result.score} pass=${result.pass} insertion=${JSON.stringify(result.insertion)} review=${JSON.stringify(result.review.summary)}`);
+                console.log(`${results.length}/${fixtures.length * 2} ${result.id}:${variant} stars=${result.stars} score=${result.score} pass=${result.pass} decision=${result.completionDecision.reason} insertion=${JSON.stringify(result.insertion)} review=${JSON.stringify(result.review.summary)}`);
             }
         }
     }
