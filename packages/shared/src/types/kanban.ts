@@ -204,6 +204,7 @@ export interface AiLogEntry {
     durationMs?: number;
     promptChars?: number;
     outputChars?: number;
+    decision?: AiTextSuggestionDecision;
 }
 
 export interface AiLogPrompt {
@@ -218,6 +219,27 @@ export interface AiTestConnectionResult {
 }
 
 export type AiTextSuggestionField = "description" | "subtask" | "comment";
+
+export type AiTextSuggestionDecisionStatus = "accepted" | "skipped" | "discarded" | "failed";
+
+export type AiTextSuggestionDecisionReason =
+    | "accepted"
+    | "settings_unavailable"
+    | "prompt_return_empty"
+    | "provider_empty_content"
+    | "structured_output_empty"
+    | "cursor_context_repeated"
+    | "description_duplicate_context"
+    | "subtask_duplicate_context"
+    | "comment_intent_ambiguous"
+    | "cursor_fit_empty"
+    | "provider_error";
+
+export interface AiTextSuggestionDecision {
+    status: AiTextSuggestionDecisionStatus;
+    reason: AiTextSuggestionDecisionReason;
+    detail?: string;
+}
 
 export interface AiSuggestionCardContext {
     currentCard?: KanbanCard;
@@ -236,6 +258,7 @@ export interface AiTextSuggestionInput {
 
 export interface AiTextSuggestionResult {
     suggestion?: string;
+    decision?: AiTextSuggestionDecision;
 }
 
 export interface AiLabelSuggestionInput {

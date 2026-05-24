@@ -27,15 +27,14 @@ import type {
 import { markdownToPlainText } from "@kanban/shared";
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { RecurrenceLifecycle, type CompletionColumnGenerationContext } from "./recurrence-lifecycle";
+import { calculateFixedRecurrenceDueDates, dateOnlyTimestampFromTimestamp, nextRecurrenceDate } from "./recurrence-rule";
 
 const defaultColumns = ["Backlog", "Todo", "In Progress", "Done"];
 const validPriorities = new Set<KanbanPriority>(["none", "low", "medium", "high", "urgent"]);
 const validRecurrenceTriggers = new Set<KanbanRecurrenceTrigger>(["fixed", "completion"]);
 const validRecurrenceCycles = new Set<KanbanRecurrenceCycle>(["daily", "weekly", "monthly"]);
 const orderStep = 1000;
-const oneDayMs = 24 * 60 * 60 * 1000;
-const fixedRecurrenceHour = 8;
-const fixedCatchUpLimit = 7;
 
 interface BoardRow {
     id: string;
@@ -125,6 +124,14 @@ interface RecurrenceTemplate {
 }
 
 export class KanbanRepository {
+    private readonly recurrence = new RecurrenceLifecycle({
+        updateTemplateForActiveBaton: (cardId) => this.updateTemplateForActiveBaton(cardId),
+        readCompletionColumnGenerationContext: (cardId, now) => this.readCompletionColumnGenerationContext(cardId, now),
+        generateNextOccurrence: (seriesId, occurrenceDate, now) => { this.generateOccurrence(seriesId, occurrenceDate, now); },
+        blockSeries: (seriesId, reason, now) => this.blockSeries(seriesId, reason, now),
+        stopSeriesForActiveBaton: (cardId, now) => this.stopSeriesForActiveBaton(cardId, now)
+    });
+
     constructor(private readonly database: Database.Database) { }
 
     listBoards(): KanbanBoard[] {
@@ -369,14 +376,13 @@ export class KanbanRepository {
                 input.id
             );
         this.touchBoard(current.boardId, updatedAt);
-        this.updateTemplateForActiveBaton(input.id);
-        this.generateNextForCompletedCard(input.id, updatedAt);
+        this.recurrence.afterCardUpdated(input.id, updatedAt);
         return this.requireCard(input.id);
     }
 
     deleteCard(input: { id: string }): void {
         const card = this.requireCard(input.id);
-        this.stopSeriesForActiveBaton(input.id);
+        this.recurrence.afterCardDeleted(input.id);
         this.database.prepare("DELETE FROM kanban_cards WHERE id = ?").run(input.id);
         this.touchBoard(card.boardId, Date.now());
     }
@@ -384,7 +390,7 @@ export class KanbanRepository {
     archiveCard(input: { id: string }): KanbanCard {
         const card = this.requireCard(input.id);
         const now = Date.now();
-        this.stopSeriesForActiveBaton(input.id, now);
+        this.recurrence.afterCardArchived(input.id, now);
         this.database.prepare("UPDATE kanban_cards SET archived_at = ?, updated_at = ? WHERE id = ?").run(now, now, input.id);
         this.touchBoard(card.boardId, now);
         return this.requireCard(input.id);
@@ -413,12 +419,27 @@ export class KanbanRepository {
             .prepare("UPDATE kanban_cards SET column_id = ?, sort_order = ?, updated_at = ? WHERE id = ?")
             .run(input.toColumnId, sortOrder, updatedAt, input.id);
         this.touchBoard(card.boardId, updatedAt);
-        this.generateNextForCompletedCard(input.id, updatedAt);
+        this.recurrence.afterCardMoved(input.id, updatedAt);
         return this.requireCard(input.id);
     }
 
     listLabels(input: { boardId: string }): KanbanLabel[] {
-        const rows = this.database.prepare("SELECT * FROM kanban_labels WHERE board_id = ? ORDER BY name ASC").all(input.boardId);
+        const rows = this.database
+            .prepare(
+                `SELECT labels.*
+         FROM kanban_labels labels
+         WHERE labels.board_id = ?
+           AND EXISTS (
+             SELECT 1
+             FROM kanban_card_labels relation
+             JOIN kanban_cards cards ON cards.id = relation.card_id
+             WHERE relation.label_id = labels.id
+               AND cards.board_id = labels.board_id
+               AND cards.archived_at IS NULL
+           )
+         ORDER BY labels.name ASC`
+            )
+            .all(input.boardId);
         return (rows as LabelRow[]).map(rowToLabel);
     }
 
@@ -455,7 +476,7 @@ export class KanbanRepository {
             }
         })();
         this.touchBoard(card.boardId, Date.now());
-        this.updateTemplateForActiveBaton(input.cardId);
+        this.recurrence.afterCardLabelsChanged(input.cardId);
     }
 
     enableCardRecurrence(input: EnableKanbanRecurrenceInput): KanbanCard {
@@ -518,31 +539,29 @@ export class KanbanRepository {
 
     disableCardRecurrence(input: { cardId: string }): KanbanCard {
         const card = this.requireCard(input.cardId);
-        this.stopSeriesForActiveBaton(card.id);
+        this.recurrence.disableCardRecurrence(card.id);
         return this.requireCard(card.id);
     }
 
     generateDueRecurrences(input: { now?: number } = {}): void {
         const now = input.now ?? Date.now();
-        const dueDate = fixedDueDate(now);
         const rows = this.database
             .prepare("SELECT * FROM kanban_recurrence_series WHERE trigger_mode = 'fixed' AND status = 'active'")
             .all() as RecurrenceSeriesRow[];
         for (const row of rows) {
-            let nextDate = addCycle(row.last_occurrence_date, row.cycle, row.anchor_day);
-            const dueDates: number[] = [];
-            while (nextDate <= dueDate) {
-                dueDates.push(nextDate);
-                nextDate = addCycle(nextDate, row.cycle, row.anchor_day);
-            }
-            const recentDueDates = dueDates.slice(-fixedCatchUpLimit);
-            for (const occurrenceDate of recentDueDates) {
+            const due = calculateFixedRecurrenceDueDates({
+                lastOccurrenceDate: row.last_occurrence_date,
+                cycle: row.cycle,
+                anchorDay: row.anchor_day,
+                now
+            });
+            for (const occurrenceDate of due.occurrenceDates) {
                 this.generateOccurrence(row.id, occurrenceDate, now);
             }
-            if (dueDates.length > fixedCatchUpLimit) {
+            if (due.skippedThroughDate !== undefined) {
                 this.database
                     .prepare("UPDATE kanban_recurrence_series SET last_occurrence_date = ?, updated_at = ? WHERE id = ?")
-                    .run(dueDates[dueDates.length - 1], now, row.id);
+                    .run(due.skippedThroughDate, now, row.id);
             }
         }
     }
@@ -834,24 +853,24 @@ export class KanbanRepository {
             .run(now, now, series.id);
     }
 
-    private generateNextForCompletedCard(cardId: string, now = Date.now()): void {
+    private readCompletionColumnGenerationContext(cardId: string, now: number): CompletionColumnGenerationContext | undefined {
         const series = this.activeSeriesForCard(cardId);
-        if (!series || series.trigger_mode !== "completion" || series.status !== "active") return;
+        if (!series || series.trigger_mode !== "completion" || series.status !== "active") return undefined;
         const occurrence = this.database
             .prepare("SELECT * FROM kanban_recurrence_occurrences WHERE series_id = ? AND card_id = ?")
             .get(series.id, cardId) as RecurrenceOccurrenceRow | undefined;
-        if (occurrence?.generated_next_at) return;
         const card = this.requireCard(cardId);
         const board = this.requireBoard(card.boardId);
         const completionColumnId = board.completionColumnId;
         const completionColumn = completionColumnId ? this.requireColumnIfExists(completionColumnId) : undefined;
-        if (!completionColumn || completionColumn.archivedAt) {
-            this.blockSeries(series.id, "请选择一个可用的完成列。", now);
-            return;
-        }
-        if (card.columnId !== completionColumn.id) return;
-        const nextOccurrenceDate = addCycle(dateOnlyTimestampFromTimestamp(now), series.cycle, new Date(now).getDate());
-        this.generateOccurrence(series.id, nextOccurrenceDate, now);
+        return {
+            seriesId: series.id,
+            cardColumnId: card.columnId,
+            completionColumnId,
+            completionColumnActive: Boolean(completionColumn && !completionColumn.archivedAt),
+            generatedNextAt: occurrence?.generated_next_at ?? undefined,
+            nextOccurrenceDate: nextRecurrenceDate(dateOnlyTimestampFromTimestamp(now), series.cycle, new Date(now).getDate())
+        };
     }
 
     private generateOccurrence(seriesId: string, occurrenceDate: number, now = Date.now()): KanbanCard | undefined {
@@ -1180,28 +1199,6 @@ function remapTemplateLabels(value: string, labelIds: Map<string, string>): stri
         ...template,
         labelIds: template.labelIds.map((labelId) => labelIds.get(labelId)).filter((labelId): labelId is string => Boolean(labelId))
     });
-}
-
-function dateOnlyTimestampFromTimestamp(timestamp: number): number {
-    const date = new Date(timestamp);
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
-function fixedDueDate(now: number): number {
-    const date = new Date(now);
-    const todayAtFixedHour = new Date(date.getFullYear(), date.getMonth(), date.getDate(), fixedRecurrenceHour).getTime();
-    const due = now >= todayAtFixedHour ? date : new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1);
-    return new Date(due.getFullYear(), due.getMonth(), due.getDate()).getTime();
-}
-
-function addCycle(timestamp: number, cycle: KanbanRecurrenceCycle, anchorDay?: number): number {
-    const date = new Date(timestamp);
-    if (cycle === "daily") return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1).getTime();
-    if (cycle === "weekly") return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7).getTime();
-    const targetYear = date.getFullYear();
-    const targetMonth = date.getMonth() + 1;
-    const targetDay = Math.min(anchorDay ?? date.getDate(), new Date(targetYear, targetMonth + 1, 0).getDate());
-    return new Date(targetYear, targetMonth, targetDay).getTime();
 }
 
 function occurrenceDateRange(source: KanbanCard, occurrenceDate: number): { startDate: number; endDate: number } {
