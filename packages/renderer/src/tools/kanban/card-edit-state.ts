@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import type { KanbanCard, KanbanCardPatch, KanbanComment, KanbanPriority, KanbanSubtask } from "@kanban/shared";
+import type { KanbanCard, KanbanCardPatch, KanbanComment, KanbanPriority, KanbanRichTextDocument, KanbanSubtask } from "@kanban/shared";
 
 export interface CardEditSnapshot {
     title: string;
@@ -7,7 +7,8 @@ export interface CardEditSnapshot {
     priority: KanbanPriority;
     startDate: number | null;
     endDate: number | null;
-    descriptionMarkdown: string;
+    descriptionMarkdown?: string;
+    descriptionJson?: KanbanRichTextDocument;
     descriptionText: string;
     subtasks: KanbanSubtask[];
     comments: KanbanComment[];
@@ -19,7 +20,8 @@ export interface CardEditingState extends CardEditSnapshot {
     setPriority: Dispatch<SetStateAction<KanbanPriority>>;
     setStartDate: Dispatch<SetStateAction<number | null>>;
     setEndDate: Dispatch<SetStateAction<number | null>>;
-    setDescriptionMarkdown: Dispatch<SetStateAction<string>>;
+    setDescriptionMarkdown: Dispatch<SetStateAction<string | undefined>>;
+    setDescriptionJson: Dispatch<SetStateAction<KanbanRichTextDocument | undefined>>;
     setDescriptionText: Dispatch<SetStateAction<string>>;
     setSubtasks: Dispatch<SetStateAction<KanbanSubtask[]>>;
     setComments: Dispatch<SetStateAction<KanbanComment[]>>;
@@ -38,7 +40,8 @@ export function cardEditSnapshotFromCard(card: KanbanCard): CardEditSnapshot {
         priority: card.priority,
         startDate: cardEditStartDate(card) ?? null,
         endDate: cardEditEndDate(card) ?? null,
-        descriptionMarkdown: card.descriptionMarkdown ?? card.descriptionText ?? "",
+        descriptionMarkdown: card.descriptionMarkdown,
+        descriptionJson: card.descriptionJson ?? richTextDocumentFromPlainText(card.descriptionMarkdown ?? card.descriptionText ?? ""),
         descriptionText: card.descriptionText ?? "",
         subtasks: card.subtasks,
         comments: card.comments
@@ -65,6 +68,7 @@ export function cardEditPatch(snapshot: CardEditSnapshot): Partial<KanbanCardPat
         startDate: snapshot.startDate,
         endDate: snapshot.endDate,
         descriptionMarkdown: snapshot.descriptionMarkdown,
+        descriptionJson: snapshot.descriptionJson,
         descriptionText: snapshot.descriptionText,
         subtasks: snapshot.subtasks,
         comments: snapshot.comments
@@ -86,7 +90,8 @@ export function useCardEditingState({
     const [priority, setPriority] = useState<KanbanPriority>(initialSnapshot.priority);
     const [startDate, setStartDate] = useState<number | null>(initialSnapshot.startDate);
     const [endDate, setEndDate] = useState<number | null>(initialSnapshot.endDate);
-    const [descriptionMarkdown, setDescriptionMarkdown] = useState(initialSnapshot.descriptionMarkdown);
+    const [descriptionMarkdown, setDescriptionMarkdown] = useState<string | undefined>(initialSnapshot.descriptionMarkdown);
+    const [descriptionJson, setDescriptionJson] = useState<KanbanRichTextDocument | undefined>(initialSnapshot.descriptionJson);
     const [descriptionText, setDescriptionText] = useState(initialSnapshot.descriptionText);
     const [subtasks, setSubtasks] = useState<KanbanSubtask[]>(initialSnapshot.subtasks);
     const [comments, setComments] = useState<KanbanComment[]>(initialSnapshot.comments);
@@ -100,6 +105,7 @@ export function useCardEditingState({
         setStartDate(nextSnapshot.startDate);
         setEndDate(nextSnapshot.endDate);
         setDescriptionMarkdown(nextSnapshot.descriptionMarkdown);
+        setDescriptionJson(nextSnapshot.descriptionJson);
         setDescriptionText(nextSnapshot.descriptionText);
         setSubtasks(nextSnapshot.subtasks);
         setComments(nextSnapshot.comments);
@@ -107,7 +113,7 @@ export function useCardEditingState({
     }, [card.id]);
 
     useEffect(() => {
-        const snapshot: CardEditSnapshot = { title, columnId, priority, startDate, endDate, descriptionMarkdown, descriptionText, subtasks, comments };
+        const snapshot: CardEditSnapshot = { title, columnId, priority, startDate, endDate, descriptionMarkdown, descriptionJson, descriptionText, subtasks, comments };
         const snapshotKey = cardEditSnapshotKey(snapshot);
         if (snapshotKey === lastSavedSnapshot.current) return;
         const timeout = window.setTimeout(() => {
@@ -117,7 +123,7 @@ export function useCardEditingState({
             });
         }, saveDelayMs);
         return () => window.clearTimeout(timeout);
-    }, [card.id, title, columnId, priority, startDate, endDate, descriptionMarkdown, descriptionText, subtasks, comments, onSave, saveDelayMs]);
+    }, [card.id, title, columnId, priority, startDate, endDate, descriptionMarkdown, descriptionJson, descriptionText, subtasks, comments, onSave, saveDelayMs]);
 
     function addSubtask(nextTitle: string): boolean {
         const trimmedTitle = nextTitle.trim();
@@ -166,6 +172,7 @@ export function useCardEditingState({
         startDate,
         endDate,
         descriptionMarkdown,
+        descriptionJson,
         descriptionText,
         subtasks,
         comments,
@@ -175,6 +182,7 @@ export function useCardEditingState({
         setStartDate,
         setEndDate,
         setDescriptionMarkdown,
+        setDescriptionJson,
         setDescriptionText,
         setSubtasks,
         setComments,
@@ -184,6 +192,18 @@ export function useCardEditingState({
         reorderSubtask,
         addComment,
         deleteComment
+    };
+}
+
+function richTextDocumentFromPlainText(value: string): KanbanRichTextDocument | undefined {
+    const trimmedValue = value.trim();
+    if (!trimmedValue) return undefined;
+    return {
+        type: "doc",
+        content: trimmedValue.split(/\n{2,}/).map((block) => ({
+            type: "paragraph",
+            content: [{ type: "text", text: block.trim() }]
+        }))
     };
 }
 

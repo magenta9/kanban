@@ -13,11 +13,13 @@ import {
 } from "@dnd-kit/core";
 import { horizontalListSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { Extension } from "@tiptap/core";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import type { Editor, JSONContent } from "@tiptap/react";
 import ReactMarkdown from "react-markdown";
-import { markdownToPlainText } from "@kanban/shared";
 import type { AiLabelSuggestion, AiSettingsState, AiSuggestionCardContext, AiTestConnectionResult, AiTextSuggestionField, KanbanBoard, KanbanCard, KanbanCardPatch, KanbanColumn, KanbanComment, KanbanLabel, KanbanPriority, KanbanRecurrenceCycle, KanbanRecurrenceTrigger, KanbanRichTextDocument, KanbanSubtask } from "@kanban/shared";
 import {
     Archive,
@@ -63,6 +65,7 @@ import {
     keyboardShortcutFromEvent,
     normalizeDateRange,
     recurrenceSummary,
+    resolveMarkdownTextareaListShortcut,
     relatedCardsForAiContext,
     resolveRichTextLinkPaste,
     shouldApplyInlineCompletion,
@@ -112,6 +115,13 @@ interface CardDropTarget {
 interface CursorText {
     before: string;
     after: string;
+}
+
+interface RichTextCompletionConfig {
+    field: AiTextSuggestionField;
+    minChars: number;
+    maxChars: number;
+    context: AiSuggestionCardContext;
 }
 
 const priorities: KanbanPriority[] = ["none", "low", "medium", "high", "urgent"];
@@ -1419,6 +1429,7 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
         startDate,
         endDate,
         descriptionMarkdown,
+        descriptionJson,
         descriptionText,
         subtasks,
         comments,
@@ -1428,6 +1439,7 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
         setStartDate,
         setEndDate,
         setDescriptionMarkdown,
+        setDescriptionJson,
         setDescriptionText,
         addSubtask: addEditedSubtask,
         updateSubtask,
@@ -1450,10 +1462,11 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
         startDate: startDate ?? undefined,
         endDate: endDate ?? undefined,
         descriptionMarkdown,
-        descriptionText: markdownToPlainText(descriptionMarkdown) ?? descriptionText,
+        descriptionJson,
+        descriptionText,
         subtasks,
         comments
-    }, cards, labels, columns), [card, cards, columns, comments, descriptionMarkdown, descriptionText, labels, columnId, priority, startDate, endDate, subtasks, title]);
+    }, cards, labels, columns), [card, cards, columns, comments, descriptionJson, descriptionMarkdown, descriptionText, labels, columnId, priority, startDate, endDate, subtasks, title]);
     const subtaskSensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
         useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -1538,16 +1551,14 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
                 </section>
                 <section className="kanban-detail-section kanban-detail-description">
                     <h4>Description</h4>
-                    <CompletionMarkdownTextarea
-                        value={descriptionMarkdown}
-                        ariaLabel="Card description"
-                        minChars={5}
-                        maxChars={50}
-                        field="description"
-                        context={aiContext}
-                        onChange={(value) => {
-                            setDescriptionMarkdown(value);
-                            setDescriptionText(markdownToPlainText(value) ?? "");
+                    <RichTextEditor
+                        value={descriptionJson}
+                        enableMarkdownLinks
+                        completion={{ field: "description", minChars: 5, maxChars: 50, context: aiContext }}
+                        onChange={(json, text) => {
+                            setDescriptionJson(json);
+                            setDescriptionMarkdown("");
+                            setDescriptionText(text);
                         }}
                     />
                 </section>
@@ -1847,6 +1858,7 @@ function MarkdownTextarea({ value, ariaLabel, onChange, onSubmit }: {
             spellCheck
             onChange={(event) => onChange(event.target.value)}
             onKeyDown={(event) => {
+                if (applyMarkdownTextareaListShortcut(event, onChange, Boolean(onSubmit))) return;
                 if (!onSubmit || !isMarkdownSubmitShortcut(event)) return;
                 event.preventDefault();
                 onSubmit();
@@ -1891,6 +1903,7 @@ function CompletionMarkdownTextarea({ value, ariaLabel, minChars, maxChars, fiel
                         if (nextValue !== null) onChange(nextValue);
                         return;
                     }
+                    if (applyMarkdownTextareaListShortcut(event, (nextValue) => { clearSuggestion(); onChange(nextValue); }, Boolean(onSubmit))) return;
                     if (!onSubmit || !isMarkdownSubmitShortcut(event)) return;
                     event.preventDefault();
                     onSubmit();
@@ -1899,6 +1912,22 @@ function CompletionMarkdownTextarea({ value, ariaLabel, minChars, maxChars, fiel
             {suggestion ? <span className="kanban-completion-ghost textarea" style={{ transform: `translateY(${-scrollTop}px)` }} aria-hidden="true"><span>{cursor.before}</span><strong>{suggestion}</strong></span> : null}
         </span>
     );
+}
+
+function applyMarkdownTextareaListShortcut(
+    event: ReactKeyboardEvent<HTMLTextAreaElement>,
+    onChange: (value: string) => void,
+    submitOnEnter: boolean
+): boolean {
+    const element = event.currentTarget;
+    const edit = resolveMarkdownTextareaListShortcut(element.value, element.selectionStart, element.selectionEnd, event, submitOnEnter);
+    if (!edit) return false;
+    event.preventDefault();
+    onChange(edit.value);
+    window.requestAnimationFrame(() => {
+        element.setSelectionRange(edit.selectionStart, edit.selectionEnd);
+    });
+    return true;
 }
 
 function useAutoGrowTextarea(elementRef: MutableRefObject<HTMLTextAreaElement | null>, value: string): void {
@@ -2023,24 +2052,179 @@ function MarkdownBlock({ markdown }: { markdown: string }): JSX.Element {
     );
 }
 
-function RichTextEditor({ value, onChange, onSubmit, enableMarkdownLinks = false }: {
+const richTextCompletionPluginKey = new PluginKey<RichTextCompletionState>("kanbanRichTextCompletion");
+
+interface RichTextCompletionState {
+    focused: boolean;
+    suggestion: string;
+    cursor: CursorText | null;
+}
+
+interface RichTextCompletionRequestState {
+    requestId: number;
+    lastRequestSignature: string;
+    timeout?: number;
+}
+
+type RichTextCompletionMeta =
+    | { type: "focus" }
+    | { type: "blur" }
+    | { type: "clear" }
+    | { type: "suggest"; suggestion: string; cursor: CursorText };
+
+function createRichTextCompletionExtension(configRef: MutableRefObject<RichTextCompletionConfig | undefined>): Extension {
+    return Extension.create({
+        name: "kanbanInlineCompletion",
+        addProseMirrorPlugins() {
+            return [
+                new Plugin<RichTextCompletionState>({
+                    key: richTextCompletionPluginKey,
+                    state: {
+                        init: () => ({ focused: false, suggestion: "", cursor: null }),
+                        apply: (transaction, previous) => {
+                            const meta = transaction.getMeta(richTextCompletionPluginKey) as RichTextCompletionMeta | undefined;
+                            if (meta?.type === "focus") return { ...previous, focused: true, suggestion: "", cursor: null };
+                            if (meta?.type === "blur") return { focused: false, suggestion: "", cursor: null };
+                            if (meta?.type === "clear") return { ...previous, suggestion: "", cursor: null };
+                            if (meta?.type === "suggest") return { ...previous, suggestion: meta.suggestion, cursor: meta.cursor };
+                            if (transaction.docChanged || transaction.selectionSet) return { ...previous, suggestion: "", cursor: null };
+                            return previous;
+                        }
+                    },
+                    props: {
+                        decorations: (state) => {
+                            const completion = richTextCompletionPluginKey.getState(state);
+                            if (!completion?.suggestion || !state.selection.empty) return DecorationSet.empty;
+                            const widget = Decoration.widget(state.selection.from, () => {
+                                const element = document.createElement("span");
+                                element.className = "kanban-editor-completion-ghost";
+                                element.textContent = completion.suggestion;
+                                return element;
+                            }, { key: `kanban-editor-completion:${completion.suggestion}`, side: 1 });
+                            return DecorationSet.create(state.doc, [widget]);
+                        },
+                        handleDOMEvents: {
+                            focus: (view) => {
+                                view.dispatch(view.state.tr.setMeta(richTextCompletionPluginKey, { type: "focus" } satisfies RichTextCompletionMeta));
+                                return false;
+                            },
+                            blur: (view) => {
+                                view.dispatch(view.state.tr.setMeta(richTextCompletionPluginKey, { type: "blur" } satisfies RichTextCompletionMeta));
+                                return false;
+                            }
+                        }
+                    }
+                })
+            ];
+        }
+    });
+}
+
+function richTextCursor(view: EditorView): CursorText {
+    const { selection, doc } = view.state;
+    return {
+        before: doc.textBetween(0, selection.from, "\n", "\n"),
+        after: doc.textBetween(selection.to, doc.content.size, "\n", "\n")
+    };
+}
+
+function normalizeRichTextInlineSuggestion(value: string): string {
+    return value.replace(/\s*\n+\s*/g, " ").trimStart();
+}
+
+function clearRichTextCompletionRequest(requestState: RichTextCompletionRequestState): void {
+    if (requestState.timeout !== undefined) window.clearTimeout(requestState.timeout);
+    requestState.timeout = undefined;
+}
+
+function scheduleRichTextCompletionRequest(editor: Editor, configRef: MutableRefObject<RichTextCompletionConfig | undefined>, requestState: RichTextCompletionRequestState): void {
+    const requestConfig = configRef.current;
+    const completionState = richTextCompletionPluginKey.getState(editor.state);
+    if (!editor.view.hasFocus()) {
+        requestState.lastRequestSignature = "";
+        clearRichTextCompletionRequest(requestState);
+        return;
+    }
+    if (!requestConfig || completionState?.suggestion || !editor.state.selection.empty) {
+        clearRichTextCompletionRequest(requestState);
+        return;
+    }
+
+    const cursor = richTextCursor(editor.view);
+    if (!shouldRequestInlineCompletion(cursor.before, cursor.after, requestConfig.minChars, editor.view.hasFocus())) {
+        clearRichTextCompletionRequest(requestState);
+        return;
+    }
+
+    const requestSignature = `${editor.state.selection.from}:${cursor.before}:${cursor.after}`;
+    if (requestSignature === requestState.lastRequestSignature) return;
+    requestState.lastRequestSignature = requestSignature;
+    clearRichTextCompletionRequest(requestState);
+
+    const activeRequestId = requestState.requestId + 1;
+    requestState.requestId = activeRequestId;
+    requestState.timeout = window.setTimeout(() => {
+        const activeConfig = configRef.current;
+        if (!activeConfig) return;
+        void getApi().ai.suggestText({
+            field: activeConfig.field,
+            textBeforeCursor: cursor.before,
+            textAfterCursor: cursor.after,
+            maxChars: activeConfig.maxChars,
+            context: activeConfig.context
+        }).then((result) => {
+            if (requestState.requestId !== activeRequestId) return;
+            const liveCursor = richTextCursor(editor.view);
+            const suggestion = normalizeRichTextInlineSuggestion(result.suggestion ?? "");
+            if (!suggestion || !editor.view.hasFocus() || !shouldApplyInlineCompletion(cursor, liveCursor, activeConfig.minChars, editor.view.hasFocus())) return;
+            editor.view.dispatch(editor.state.tr.setMeta(richTextCompletionPluginKey, { type: "suggest", suggestion, cursor } satisfies RichTextCompletionMeta));
+        }).catch(() => {
+            if (requestState.requestId === activeRequestId) {
+                editor.view.dispatch(editor.state.tr.setMeta(richTextCompletionPluginKey, { type: "clear" } satisfies RichTextCompletionMeta));
+            }
+        });
+    }, 500);
+}
+
+function acceptRichTextCompletion(editor: Editor): boolean {
+    const view = editor.view;
+    const state = richTextCompletionPluginKey.getState(view.state);
+    if (!state?.suggestion || !state.cursor) return false;
+    const liveCursor = richTextCursor(view);
+    if (state.cursor.before !== liveCursor.before || state.cursor.after !== liveCursor.after) {
+        view.dispatch(view.state.tr.setMeta(richTextCompletionPluginKey, { type: "clear" } satisfies RichTextCompletionMeta));
+        return false;
+    }
+    view.dispatch(view.state.tr.insertText(state.suggestion, view.state.selection.from, view.state.selection.to).setMeta(richTextCompletionPluginKey, { type: "clear" } satisfies RichTextCompletionMeta));
+    return true;
+}
+
+function RichTextEditor({ value, onChange, onSubmit, enableMarkdownLinks = false, completion }: {
     value?: KanbanRichTextDocument;
     onChange: (json: KanbanRichTextDocument, text: string) => void;
     onSubmit?: RichTextSubmitHandler;
     enableMarkdownLinks?: boolean;
+    completion?: RichTextCompletionConfig;
 }): JSX.Element {
     const pendingValueRef = useRef<JSONContent | null>(null);
     const onChangeRef = useRef(onChange);
     const onSubmitRef = useRef<RichTextSubmitHandler | undefined>(onSubmit);
+    const completionRef = useRef<RichTextCompletionConfig | undefined>(completion);
+    const completionRequestRef = useRef<RichTextCompletionRequestState>({ requestId: 0, lastRequestSignature: "" });
     const editorRef = useRef<Editor | null>(null);
+    const extensions = useMemo(() => [
+        StarterKit.configure({ link: { autolink: true, linkOnPaste: true, openOnClick: false } }),
+        createRichTextCompletionExtension(completionRef)
+    ], []);
 
     useEffect(() => {
         onChangeRef.current = onChange;
         onSubmitRef.current = onSubmit;
-    }, [onChange, onSubmit]);
+        completionRef.current = completion;
+    }, [completion, onChange, onSubmit]);
 
     const editor = useEditor({
-        extensions: [StarterKit],
+        extensions,
         content: (value as JSONContent | undefined) ?? { type: "doc", content: [{ type: "paragraph" }] },
         editorProps: {
             attributes: { class: "kanban-editor-content" },
@@ -2068,6 +2252,10 @@ function RichTextEditor({ value, onChange, onSubmit, enableMarkdownLinks = false
             },
             handleKeyDown: (view, event) => {
                 const currentEditor = editorRef.current;
+                if (currentEditor && event.key === "Tab" && acceptRichTextCompletion(currentEditor)) {
+                    event.preventDefault();
+                    return true;
+                }
                 if (currentEditor && isRichTextListIndentShortcut(event) && isRichTextListActive(currentEditor)) {
                     const handled = applyRichTextListIndentation(currentEditor, event.shiftKey);
                     if (handled) {
@@ -2091,8 +2279,15 @@ function RichTextEditor({ value, onChange, onSubmit, enableMarkdownLinks = false
                 return true;
             }
         },
-        onUpdate: ({ editor: current }) => onChangeRef.current(current.getJSON() as KanbanRichTextDocument, current.getText()),
+        onFocus: ({ editor: current }) => scheduleRichTextCompletionRequest(current, completionRef, completionRequestRef.current),
+        onSelectionUpdate: ({ editor: current }) => scheduleRichTextCompletionRequest(current, completionRef, completionRequestRef.current),
+        onUpdate: ({ editor: current }) => {
+            onChangeRef.current(current.getJSON() as KanbanRichTextDocument, current.getText());
+            scheduleRichTextCompletionRequest(current, completionRef, completionRequestRef.current);
+        },
         onBlur: ({ editor: current }) => {
+            completionRequestRef.current.lastRequestSignature = "";
+            clearRichTextCompletionRequest(completionRequestRef.current);
             const pending = pendingValueRef.current;
             if (pending !== null) {
                 pendingValueRef.current = null;

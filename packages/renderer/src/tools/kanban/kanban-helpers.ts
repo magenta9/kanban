@@ -115,6 +115,112 @@ export function isMarkdownSubmitShortcut(event: Pick<KeyboardEvent, "key" | "shi
     return event.key === "Enter" && !event.shiftKey && !event.isComposing;
 }
 
+export interface MarkdownTextareaEdit {
+    value: string;
+    selectionStart: number;
+    selectionEnd: number;
+}
+
+export function resolveMarkdownTextareaListShortcut(
+    value: string,
+    selectionStart: number,
+    selectionEnd: number,
+    event: Pick<KeyboardEvent, "key" | "shiftKey"> & { isComposing?: boolean },
+    submitOnEnter: boolean
+): MarkdownTextareaEdit | null {
+    if (event.isComposing) return null;
+    if (event.key === "Tab") return resolveMarkdownListIndentation(value, selectionStart, selectionEnd, event.shiftKey);
+    if (event.key === "Enter" && (!submitOnEnter || event.shiftKey)) return resolveMarkdownListContinuation(value, selectionStart, selectionEnd);
+    return null;
+}
+
+function resolveMarkdownListContinuation(value: string, selectionStart: number, selectionEnd: number): MarkdownTextareaEdit | null {
+    if (selectionStart !== selectionEnd) return null;
+    const lineStart = lineStartAt(value, selectionStart);
+    const lineEnd = lineEndAt(value, selectionStart);
+    const lineBeforeCursor = value.slice(lineStart, selectionStart);
+    const lineAfterCursor = value.slice(selectionStart, lineEnd);
+    const listMatch = /^(?<indent>\s*)(?<marker>[-*+]|\d+[.)])(?<space>\s+|$)(?<body>.*)$/.exec(lineBeforeCursor);
+    if (!listMatch?.groups) return null;
+
+    const body = listMatch.groups.body ?? "";
+    if (!body.trim() && !lineAfterCursor.trim()) {
+        const nextValue = `${value.slice(0, lineStart)}${value.slice(lineEnd)}`;
+        return { value: nextValue, selectionStart: lineStart, selectionEnd: lineStart };
+    }
+
+    const marker = nextMarkdownListMarker(listMatch.groups.marker ?? "-");
+    const insertion = `\n${listMatch.groups.indent ?? ""}${marker} `;
+    const nextPosition = selectionStart + insertion.length;
+    return {
+        value: `${value.slice(0, selectionStart)}${insertion}${value.slice(selectionStart)}`,
+        selectionStart: nextPosition,
+        selectionEnd: nextPosition
+    };
+}
+
+function resolveMarkdownListIndentation(value: string, selectionStart: number, selectionEnd: number, outdent: boolean): MarkdownTextareaEdit | null {
+    const blockStart = lineStartAt(value, selectionStart);
+    const effectiveEnd = selectionEnd > selectionStart && value[selectionEnd - 1] === "\n" ? selectionEnd - 1 : selectionEnd;
+    const blockEnd = lineEndAt(value, effectiveEnd);
+    const block = value.slice(blockStart, blockEnd);
+    const lines = block.split("\n");
+    const lineOffsets: number[] = [];
+    let offset = blockStart;
+    let hasListLine = false;
+    let canTransform = true;
+
+    for (const line of lines) {
+        lineOffsets.push(offset);
+        offset += line.length + 1;
+        if (!line.trim()) continue;
+        if (/^\s*([-*+]|\d+[.)])(\s+|$)/.test(line)) {
+            hasListLine = true;
+            continue;
+        }
+        canTransform = false;
+    }
+
+    if (!hasListLine || !canTransform) return null;
+
+    let selectionStartDelta = 0;
+    let selectionEndDelta = 0;
+    const nextLines = lines.map((line, index) => {
+        if (!/^\s*([-*+]|\d+[.)])(\s+|$)/.test(line)) return line;
+        const lineStart = lineOffsets[index] ?? blockStart;
+        const leadingSpaces = /^ */.exec(line)?.[0].length ?? 0;
+        const removed = outdent ? Math.min(2, leadingSpaces) : 0;
+        const nextLine = outdent ? line.slice(removed) : `  ${line}`;
+        const delta = nextLine.length - line.length;
+        const editPosition = lineStart + (outdent ? removed : 0);
+        if (selectionStart > editPosition) selectionStartDelta += delta;
+        if (selectionEnd > editPosition) selectionEndDelta += delta;
+        return nextLine;
+    });
+
+    const nextBlock = nextLines.join("\n");
+    return {
+        value: `${value.slice(0, blockStart)}${nextBlock}${value.slice(blockEnd)}`,
+        selectionStart: Math.max(blockStart, selectionStart + selectionStartDelta),
+        selectionEnd: Math.max(blockStart, selectionEnd + selectionEndDelta)
+    };
+}
+
+function nextMarkdownListMarker(marker: string): string {
+    const ordered = /^(?<index>\d+)(?<delimiter>[.)])$/.exec(marker);
+    if (!ordered?.groups) return marker;
+    return `${Number(ordered.groups.index) + 1}${ordered.groups.delimiter}`;
+}
+
+function lineStartAt(value: string, position: number): number {
+    return position <= 0 ? 0 : value.lastIndexOf("\n", position - 1) + 1;
+}
+
+function lineEndAt(value: string, position: number): number {
+    const nextLine = value.indexOf("\n", position);
+    return nextLine === -1 ? value.length : nextLine;
+}
+
 export function isEditableShortcutTarget(target: EventTarget | null): boolean {
     if (!(target instanceof Element)) return false;
     let element: Element | null = target;

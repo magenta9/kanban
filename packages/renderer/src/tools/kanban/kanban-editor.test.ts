@@ -13,6 +13,7 @@ import {
     normalizeDateRange,
     parseRichTextMarkdownLink,
     relatedCardsForAiContext,
+    resolveMarkdownTextareaListShortcut,
     recurrenceSummary,
     resolveRichTextLinkPaste,
     stableLabelColor,
@@ -137,6 +138,58 @@ describe("isMarkdownSubmitShortcut", () => {
 
     it("does not submit while composing text", () => {
         expect(isMarkdownSubmitShortcut({ key: "Enter", shiftKey: false, isComposing: true })).toBe(false);
+    });
+});
+
+describe("resolveMarkdownTextareaListShortcut", () => {
+    it("continues unordered lists on Enter in description textareas", () => {
+        expect(resolveMarkdownTextareaListShortcut("- task", 6, 6, { key: "Enter", shiftKey: false, isComposing: false }, false)).toEqual({
+            value: "- task\n- ",
+            selectionStart: 9,
+            selectionEnd: 9
+        });
+    });
+
+    it("increments ordered list markers when continuing a list", () => {
+        expect(resolveMarkdownTextareaListShortcut("1. task", 7, 7, { key: "Enter", shiftKey: false, isComposing: false }, false)).toEqual({
+            value: "1. task\n2. ",
+            selectionStart: 11,
+            selectionEnd: 11
+        });
+    });
+
+    it("keeps plain Enter available for comment submit shortcuts", () => {
+        expect(resolveMarkdownTextareaListShortcut("- task", 6, 6, { key: "Enter", shiftKey: false, isComposing: false }, true)).toBeNull();
+        expect(resolveMarkdownTextareaListShortcut("- task", 6, 6, { key: "Enter", shiftKey: true, isComposing: false }, true)).toEqual({
+            value: "- task\n- ",
+            selectionStart: 9,
+            selectionEnd: 9
+        });
+    });
+
+    it("exits a list when Enter is pressed on an empty list item", () => {
+        expect(resolveMarkdownTextareaListShortcut("Intro\n- ", 8, 8, { key: "Enter", shiftKey: false, isComposing: false }, false)).toEqual({
+            value: "Intro\n",
+            selectionStart: 6,
+            selectionEnd: 6
+        });
+    });
+
+    it("indents and outdents markdown list lines with Tab", () => {
+        expect(resolveMarkdownTextareaListShortcut("- task", 6, 6, { key: "Tab", shiftKey: false, isComposing: false }, false)).toEqual({
+            value: "  - task",
+            selectionStart: 8,
+            selectionEnd: 8
+        });
+        expect(resolveMarkdownTextareaListShortcut("  - task", 8, 8, { key: "Tab", shiftKey: true, isComposing: false }, false)).toEqual({
+            value: "- task",
+            selectionStart: 6,
+            selectionEnd: 6
+        });
+    });
+
+    it("does not capture Tab on plain markdown text", () => {
+        expect(resolveMarkdownTextareaListShortcut("plain", 5, 5, { key: "Tab", shiftKey: false, isComposing: false }, false)).toBeNull();
     });
 });
 
