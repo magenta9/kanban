@@ -32,7 +32,10 @@ describe("Card Editing State", () => {
         expect(snapshot).toMatchObject({
             startDate: 123,
             endDate: 123,
-            descriptionMarkdown: "Plain description",
+            descriptionJson: {
+                type: "doc",
+                content: [{ type: "paragraph", content: [{ type: "text", text: "Plain description" }] }]
+            },
             descriptionText: "Plain description"
         });
     });
@@ -46,10 +49,27 @@ describe("Card Editing State", () => {
             priority: "none",
             startDate: null,
             endDate: null,
-            descriptionMarkdown: "",
+            descriptionMarkdown: undefined,
+            descriptionJson: undefined,
             descriptionText: "",
             subtasks: [],
             comments: []
+        });
+    });
+
+    it("keeps rich text JSON as the editable description source when available", () => {
+        const descriptionJson = { type: "doc", content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Plan" }] }] };
+        const snapshot = cardEditSnapshotFromCard(testCard({
+            descriptionMarkdown: "## Stale markdown",
+            descriptionJson,
+            descriptionText: "Plan"
+        }));
+
+        expect(snapshot.descriptionJson).toEqual(descriptionJson);
+        expect(cardEditPatch({ ...snapshot, descriptionMarkdown: "" })).toMatchObject({
+            descriptionMarkdown: "",
+            descriptionJson,
+            descriptionText: "Plan"
         });
     });
 
