@@ -41,21 +41,21 @@ describe("Draft Card state", () => {
         const create = vi.fn().mockResolvedValue(undefined);
         const { result } = renderHook(() => useDraftCardState());
 
-        act(() => result.current.open("todo"));
-        expect(result.current.isComposerOpen("todo")).toBe(true);
+        act(() => result.current.composerForColumn("todo").openComposer());
+        expect(result.current.composerForColumn("todo").open).toBe(true);
 
-        act(() => result.current.setTitle("todo", "  New card  "));
-        expect(result.current.titleForColumn("todo")).toBe("  New card  ");
+        act(() => result.current.composerForColumn("todo").setTitle("  New card  "));
+        expect(result.current.composerForColumn("todo").title).toBe("  New card  ");
 
         await act(async () => {
-            await expect(result.current.submit("todo", create)).resolves.toBe(true);
+            await expect(result.current.composerForColumn("todo").submit(create)).resolves.toBe(true);
         });
-        expect(create).toHaveBeenCalledWith("New card");
+        expect(create).toHaveBeenCalledWith({ columnId: "todo", title: "New card" });
         expect(result.current.draftCard).toBeNull();
 
-        act(() => result.current.open("doing"));
+        act(() => result.current.composerForColumn("doing").openComposer());
         act(() => result.current.close());
-        expect(result.current.isComposerOpen("doing")).toBe(false);
+        expect(result.current.composerForColumn("doing").open).toBe(false);
     });
 
     it("opens a Draft Card from keyboard shortcut target selection", () => {

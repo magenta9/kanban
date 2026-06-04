@@ -6,6 +6,16 @@ export interface DraftCard {
     title: string;
 }
 
+export interface DraftCardComposer {
+    title: string;
+    open: boolean;
+    inputRef: (node: HTMLInputElement | null) => void;
+    setTitle: (title: string) => void;
+    openComposer: (options?: { focus?: boolean }) => void;
+    close: () => void;
+    submit: (create: (draftCard: DraftCard) => Promise<void>) => Promise<boolean>;
+}
+
 export function chooseDraftCardColumnId({
     selectedCard,
     visibleColumns,
@@ -23,14 +33,10 @@ export function chooseDraftCardColumnId({
 export function useDraftCardState(): {
     draftCard: DraftCard | null;
     activeColumnId: string;
-    titleForColumn: (columnId: string) => string;
-    isComposerOpen: (columnId: string) => boolean;
-    setTitle: (columnId: string, title: string) => void;
-    setInputRef: (columnId: string, node: HTMLInputElement | null) => void;
-    open: (columnId: string, options?: { focus?: boolean }) => void;
+    composerForColumn: (columnId: string) => DraftCardComposer;
     openFromShortcut: (input: { selectedCard?: KanbanCard; visibleColumns: KanbanColumn[] }) => string;
     close: () => void;
-    submit: (columnId: string, create: (title: string) => Promise<void>) => Promise<boolean>;
+    submit: (columnId: string, create: (draftCard: DraftCard) => Promise<void>) => Promise<boolean>;
 } {
     const [draftCard, setDraftCard] = useState<DraftCard | null>(null);
     const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -52,11 +58,11 @@ export function useDraftCardState(): {
         setDraftCard((current) => current?.columnId === columnId ? { ...current, title } : { columnId, title });
     }
 
-    async function submit(columnId: string, create: (title: string) => Promise<void>): Promise<boolean> {
+    async function submit(columnId: string, create: (draftCard: DraftCard) => Promise<void>): Promise<boolean> {
         if (draftCard?.columnId !== columnId) return false;
         const title = draftCard.title.trim();
         if (!title) return false;
-        await create(title);
+        await create({ columnId, title });
         close();
         return true;
     }
@@ -68,14 +74,22 @@ export function useDraftCardState(): {
         return columnId;
     }
 
+    function composerForColumn(columnId: string): DraftCardComposer {
+        return {
+            title: draftCard?.columnId === columnId ? draftCard.title : "",
+            open: draftCard?.columnId === columnId,
+            inputRef: (node) => { inputRefs.current[columnId] = node; },
+            setTitle: (title) => setTitle(columnId, title),
+            openComposer: (options) => open(columnId, options),
+            close,
+            submit: (create) => submit(columnId, create)
+        };
+    }
+
     return {
         draftCard,
         activeColumnId: draftCard?.columnId ?? "",
-        titleForColumn: (columnId) => draftCard?.columnId === columnId ? draftCard.title : "",
-        isComposerOpen: (columnId) => draftCard?.columnId === columnId,
-        setTitle,
-        setInputRef: (columnId, node) => { inputRefs.current[columnId] = node; },
-        open,
+        composerForColumn,
         openFromShortcut,
         close,
         submit
