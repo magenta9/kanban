@@ -1,6 +1,8 @@
 import type { AiLabelSuggestion, AiLabelSuggestionInput, AiLabelSuggestionResult, AiLogPrompt, AiTextSuggestionInput, AiTextSuggestionResult } from "@kanban/shared";
-import { buildLabelMessages, buildTextPromptInput, buildTextSystemPrompt, labelSuggestionOutputSchema, normalizeLabelName as normalizeContractLabelName, textMaxTokens, textSuggestionOutputSchema } from "./suggestion-contract";
+import { buildLabelMessages, labelSuggestionOutputSchema } from "./label-suggestion-contract";
 import { chatCompletionHeaders, ollamaChatBody, ollamaChatUrl, responseErrorDetail, type AiSettingsService } from "./settings-service";
+import { buildTextPromptInput, buildTextSystemPrompt, textMaxTokens, textSuggestionOutputSchema } from "./suggestion-contract";
+import { normalizeLabelName as normalizeContractLabelName } from "./suggestion-context";
 import {
     normalizeInsertionSuggestion,
     normalizeSuggestion,
