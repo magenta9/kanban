@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KanbanCard, KanbanCardPatch, KanbanComment, KanbanPriority, KanbanRichTextDocument, KanbanSubtask } from "@kanban/shared";
 
 export interface CardEditSnapshot {
@@ -15,16 +15,11 @@ export interface CardEditSnapshot {
 }
 
 export interface CardEditingState extends CardEditSnapshot {
-    setTitle: Dispatch<SetStateAction<string>>;
-    setColumnId: Dispatch<SetStateAction<string>>;
-    setPriority: Dispatch<SetStateAction<KanbanPriority>>;
-    setStartDate: Dispatch<SetStateAction<number | null>>;
-    setEndDate: Dispatch<SetStateAction<number | null>>;
-    setDescriptionMarkdown: Dispatch<SetStateAction<string | undefined>>;
-    setDescriptionJson: Dispatch<SetStateAction<KanbanRichTextDocument | undefined>>;
-    setDescriptionText: Dispatch<SetStateAction<string>>;
-    setSubtasks: Dispatch<SetStateAction<KanbanSubtask[]>>;
-    setComments: Dispatch<SetStateAction<KanbanComment[]>>;
+    updateTitle: (title: string) => void;
+    moveToColumn: (columnId: string) => void;
+    updatePriority: (priority: KanbanPriority) => void;
+    updateDateRange: (startDate: number | null, endDate: number | null) => void;
+    updateDescription: (input: { markdown?: string; json?: KanbanRichTextDocument; text: string }) => void;
     addSubtask: (title: string) => boolean;
     updateSubtask: (id: string, patch: Partial<Pick<KanbanSubtask, "title" | "completed">>) => void;
     deleteSubtask: (id: string) => void;
@@ -165,6 +160,12 @@ export function useCardEditingState({
         setComments((current) => current.filter((item) => item.id !== id));
     }
 
+    function updateDescription(input: { markdown?: string; json?: KanbanRichTextDocument; text: string }): void {
+        setDescriptionMarkdown(input.markdown);
+        setDescriptionJson(input.json);
+        setDescriptionText(input.text);
+    }
+
     return {
         title,
         columnId,
@@ -176,16 +177,14 @@ export function useCardEditingState({
         descriptionText,
         subtasks,
         comments,
-        setTitle,
-        setColumnId,
-        setPriority,
-        setStartDate,
-        setEndDate,
-        setDescriptionMarkdown,
-        setDescriptionJson,
-        setDescriptionText,
-        setSubtasks,
-        setComments,
+        updateTitle: setTitle,
+        moveToColumn: setColumnId,
+        updatePriority: setPriority,
+        updateDateRange: (nextStartDate, nextEndDate) => {
+            setStartDate(nextStartDate);
+            setEndDate(nextEndDate);
+        },
+        updateDescription,
         addSubtask,
         updateSubtask,
         deleteSubtask,

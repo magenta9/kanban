@@ -12,7 +12,6 @@ import type {
     KanbanCardRecurrenceSummary,
     KanbanColumn,
     KanbanColumnPatch,
-    KanbanComment,
     KanbanLabel,
     KanbanPriority,
     KanbanRecurrenceCycle,
@@ -20,15 +19,17 @@ import type {
     KanbanRecurrenceSeries,
     KanbanRecurrenceStatus,
     KanbanRecurrenceTrigger,
-    KanbanRichTextDocument,
-    KanbanSubtask,
     UpdateKanbanRecurrenceInput
 } from "@kanban/shared";
 import { markdownToPlainText } from "@kanban/shared";
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { createBoardImportPlan } from "./board-import-plan";
+import { cardToInsertParams, normalizeTimestamp, rowToCard, serializeComments, serializeRichText, serializeSubtasks, type CardRow } from "./card-persistence-codec";
 import { RecurrenceLifecycle, type CompletionColumnGenerationContext } from "./recurrence-lifecycle";
-import { calculateFixedRecurrenceDueDates, dateOnlyTimestampFromTimestamp, nextRecurrenceDate } from "./recurrence-rule";
+import { RecurrenceOccurrenceGenerator, type GeneratedOccurrenceRecord, type RecurrenceGenerationSeries } from "./recurrence-occurrence-generator";
+import { dateOnlyTimestampFromTimestamp, nextRecurrenceDate } from "./recurrence-rule";
+import { serializeRecurrenceTemplate, templateFromCard } from "./recurrence-template";
 
 const defaultColumns = ["Backlog", "Todo", "In Progress", "Done"];
 const validPriorities = new Set<KanbanPriority>(["none", "low", "medium", "high", "urgent"]);
@@ -51,26 +52,6 @@ interface ColumnRow {
     board_id: string;
     name: string;
     color: string | null;
-    sort_order: number;
-    created_at: number;
-    updated_at: number;
-    archived_at: number | null;
-}
-
-interface CardRow {
-    id: string;
-    board_id: string;
-    column_id: string;
-    title: string;
-    description_markdown: string | null;
-    description_json: string | null;
-    description_text: string | null;
-    subtasks_json: string;
-    comments_json: string;
-    priority: KanbanPriority;
-    due_date: number | null;
-    start_date: number | null;
-    end_date: number | null;
     sort_order: number;
     created_at: number;
     updated_at: number;
@@ -113,21 +94,24 @@ interface RecurrenceOccurrenceRow {
     created_at: number;
 }
 
-interface RecurrenceTemplate {
-    title: string;
-    descriptionMarkdown?: string;
-    descriptionJson?: KanbanRichTextDocument;
-    descriptionText?: string;
-    priority: KanbanPriority;
-    labelIds: string[];
-    subtasks: KanbanSubtask[];
-}
-
 export class KanbanRepository {
+    private readonly occurrenceGenerator = new RecurrenceOccurrenceGenerator({
+        listActiveFixedSeries: () => this.listActiveFixedSeriesForGeneration(),
+        updateSeriesLastOccurrenceDate: (seriesId, lastOccurrenceDate, now) => this.updateSeriesLastOccurrenceDate(seriesId, lastOccurrenceDate, now),
+        requireSeries: (id) => this.recurrenceSeriesForGeneration(this.requireRecurrenceSeries(id)),
+        requireCard: (id) => this.requireCard(id),
+        requireGeneratedCard: (id) => this.requireCard(id),
+        stopSeriesForActiveBaton: (cardId, now) => this.stopSeriesForActiveBaton(cardId, now),
+        ensureTargetColumn: (boardId, now) => this.ensureRecurrenceTargetColumn(boardId, now),
+        nextCardOrder: (columnId) => this.nextCardOrder(columnId),
+        labelBelongsToBoard: (labelId, boardId) => this.labelBelongsToBoard(labelId, boardId),
+        saveGeneratedOccurrence: (record) => this.saveGeneratedOccurrence(record)
+    });
+
     private readonly recurrence = new RecurrenceLifecycle({
         updateTemplateForActiveBaton: (cardId) => this.updateTemplateForActiveBaton(cardId),
         readCompletionColumnGenerationContext: (cardId, now) => this.readCompletionColumnGenerationContext(cardId, now),
-        generateNextOccurrence: (seriesId, occurrenceDate, now) => { this.generateOccurrence(seriesId, occurrenceDate, now); },
+        generateNextOccurrence: (seriesId, occurrenceDate, now) => { this.occurrenceGenerator.generateNext(seriesId, occurrenceDate, now); },
         blockSeries: (seriesId, reason, now) => this.blockSeries(seriesId, reason, now),
         stopSeriesForActiveBaton: (cardId, now) => this.stopSeriesForActiveBaton(cardId, now)
     });
@@ -545,25 +529,7 @@ export class KanbanRepository {
 
     generateDueRecurrences(input: { now?: number } = {}): void {
         const now = input.now ?? Date.now();
-        const rows = this.database
-            .prepare("SELECT * FROM kanban_recurrence_series WHERE trigger_mode = 'fixed' AND status = 'active'")
-            .all() as RecurrenceSeriesRow[];
-        for (const row of rows) {
-            const due = calculateFixedRecurrenceDueDates({
-                lastOccurrenceDate: row.last_occurrence_date,
-                cycle: row.cycle,
-                anchorDay: row.anchor_day,
-                now
-            });
-            for (const occurrenceDate of due.occurrenceDates) {
-                this.generateOccurrence(row.id, occurrenceDate, now);
-            }
-            if (due.skippedThroughDate !== undefined) {
-                this.database
-                    .prepare("UPDATE kanban_recurrence_series SET last_occurrence_date = ?, updated_at = ? WHERE id = ?")
-                    .run(due.skippedThroughDate, now, row.id);
-            }
-        }
+        this.occurrenceGenerator.generateDueFixed(now);
     }
 
     exportBoard(input: { boardId: string }): KanbanBoardExport {
@@ -578,23 +544,8 @@ export class KanbanRepository {
     }
 
     importBoard(input: { payload: KanbanBoardExport }): KanbanBoard {
-        if (input.payload.version !== 1) {
-            throw new Error("Unsupported Kanban export version.");
-        }
         const now = Date.now();
-        const boardId = randomUUID();
-        const columnIds = new Map(input.payload.columns.map((column) => [column.id, randomUUID()]));
-        const cardIds = new Map(input.payload.cards.map((card) => [card.id, randomUUID()]));
-        const labelIds = new Map(input.payload.labels.map((label) => [label.id, randomUUID()]));
-        const board: KanbanBoard = {
-            id: boardId,
-            name: `${input.payload.board.name} Copy`,
-            description: input.payload.board.description,
-            completionColumnId: input.payload.board.completionColumnId ? columnIds.get(input.payload.board.completionColumnId) : undefined,
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: input.payload.board.archivedAt
-        };
+        const plan = createBoardImportPlan({ payload: input.payload, now });
 
         this.database.transaction(() => {
             this.database
@@ -602,31 +553,23 @@ export class KanbanRepository {
                     `INSERT INTO kanban_boards (id, name, description, completion_column_id, created_at, updated_at, archived_at)
              VALUES (@id, @name, @description, @completionColumnId, @createdAt, @updatedAt, @archivedAt)`
                 )
-                .run({ ...board, description: board.description ?? null, completionColumnId: board.completionColumnId ?? null, archivedAt: board.archivedAt ?? null });
-            for (const column of input.payload.columns) {
-                this.insertColumn({ ...column, id: columnIds.get(column.id) ?? randomUUID(), boardId });
+                .run({ ...plan.board, description: plan.board.description ?? null, completionColumnId: plan.board.completionColumnId ?? null, archivedAt: plan.board.archivedAt ?? null });
+            for (const column of plan.columns) {
+                this.insertColumn(column);
             }
-            for (const label of input.payload.labels) {
+            for (const label of plan.labels) {
                 this.database
                     .prepare("INSERT INTO kanban_labels (id, board_id, name, color) VALUES (@id, @boardId, @name, @color)")
-                    .run({ ...label, id: labelIds.get(label.id), boardId });
+                    .run(label);
             }
-            for (const card of input.payload.cards) {
-                const nextColumnId = columnIds.get(card.columnId);
-                if (!nextColumnId) continue;
-                this.insertCard({ ...card, id: cardIds.get(card.id) ?? randomUUID(), boardId, columnId: nextColumnId, labelIds: [] });
+            for (const card of plan.cards) {
+                this.insertCard(card);
             }
             const insertCardLabel = this.database.prepare("INSERT OR IGNORE INTO kanban_card_labels (card_id, label_id) VALUES (?, ?)");
-            for (const relation of input.payload.cardLabels) {
-                const cardId = cardIds.get(relation.cardId);
-                const labelId = labelIds.get(relation.labelId);
-                if (cardId && labelId) insertCardLabel.run(cardId, labelId);
+            for (const relation of plan.cardLabels) {
+                insertCardLabel.run(relation.cardId, relation.labelId);
             }
-            const seriesIds = new Map((input.payload.recurrenceSeries ?? []).map((series) => [series.id, randomUUID()]));
-            for (const series of input.payload.recurrenceSeries ?? []) {
-                const nextSeriesId = seriesIds.get(series.id);
-                if (!nextSeriesId) continue;
-                const activeBatonCardId = series.activeBatonCardId ? cardIds.get(series.activeBatonCardId) : undefined;
+            for (const series of plan.recurrenceSeries) {
                 this.database
                     .prepare(
                         `INSERT INTO kanban_recurrence_series
@@ -634,34 +577,30 @@ export class KanbanRepository {
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
                     )
                     .run(
-                        nextSeriesId,
-                        boardId,
+                        series.id,
+                        series.boardId,
                         series.trigger,
                         series.cycle,
-                        activeBatonCardId ?? null,
-                        remapTemplateLabels(series.templateJson, labelIds),
+                        series.activeBatonCardId ?? null,
+                        series.templateJson,
                         series.status,
                         series.blockedReason ?? null,
                         series.lastOccurrenceDate,
                         series.anchorDay,
-                        now,
-                        now,
+                        series.createdAt,
+                        series.updatedAt,
                         series.stoppedAt ?? null
                     );
             }
             const insertOccurrence = this.database.prepare(
                 "INSERT INTO kanban_recurrence_occurrences (series_id, card_id, occurrence_date, generated_next_at, created_at) VALUES (?, ?, ?, ?, ?)"
             );
-            for (const occurrence of input.payload.recurrenceOccurrences ?? []) {
-                const nextSeriesId = seriesIds.get(occurrence.seriesId);
-                const nextCardId = cardIds.get(occurrence.cardId);
-                if (nextSeriesId && nextCardId) {
-                    insertOccurrence.run(nextSeriesId, nextCardId, occurrence.occurrenceDate, occurrence.generatedNextAt ?? null, now);
-                }
+            for (const occurrence of plan.recurrenceOccurrences) {
+                insertOccurrence.run(occurrence.seriesId, occurrence.cardId, occurrence.occurrenceDate, occurrence.generatedNextAt ?? null, occurrence.createdAt);
             }
         })();
 
-        return board;
+        return plan.board;
     }
 
     private requireBoard(id: string): KanbanBoard {
@@ -704,18 +643,7 @@ export class KanbanRepository {
          (id, board_id, column_id, title, description_markdown, description_json, description_text, subtasks_json, comments_json, priority, due_date, start_date, end_date, sort_order, created_at, updated_at, archived_at)
          VALUES (@id, @boardId, @columnId, @title, @descriptionMarkdown, @descriptionJson, @descriptionText, @subtasksJson, @commentsJson, @priority, @dueDate, @startDate, @endDate, @sortOrder, @createdAt, @updatedAt, @archivedAt)`
             )
-            .run({
-                ...card,
-                descriptionMarkdown: card.descriptionMarkdown ?? null,
-                descriptionJson: serializeRichText(card.descriptionJson),
-                descriptionText: card.descriptionText ?? markdownToPlainText(card.descriptionMarkdown) ?? null,
-                subtasksJson: serializeSubtasks(card.subtasks),
-                commentsJson: serializeComments(card.comments),
-                dueDate: normalizeTimestamp(card.dueDate, "dueDate"),
-                startDate: normalizeTimestamp(card.startDate ?? card.dueDate, "startDate"),
-                endDate: normalizeTimestamp(card.endDate ?? (card.startDate === undefined ? card.dueDate : undefined), "endDate"),
-                archivedAt: card.archivedAt ?? null
-            });
+            .run(cardToInsertParams(card));
     }
 
     private nextColumnOrder(boardId: string): number {
@@ -873,64 +801,53 @@ export class KanbanRepository {
         };
     }
 
-    private generateOccurrence(seriesId: string, occurrenceDate: number, now = Date.now()): KanbanCard | undefined {
-        const series = this.requireRecurrenceSeries(seriesId);
-        if (series.status !== "active" || !series.active_baton_card_id) return undefined;
-        const source = this.requireCard(series.active_baton_card_id);
-        if (source.archivedAt) {
-            this.stopSeriesForActiveBaton(source.id, now);
-            return undefined;
-        }
-        const targetColumn = this.ensureRecurrenceTargetColumn(source.boardId, now);
-        const template = parseRecurrenceTemplate(series.template_json) ?? templateFromCard(source);
-        const dateRange = occurrenceDateRange(source, occurrenceDate);
-        const card: KanbanCard = {
-            id: randomUUID(),
-            boardId: source.boardId,
-            columnId: targetColumn.id,
-            title: template.title,
-            descriptionMarkdown: template.descriptionMarkdown,
-            descriptionJson: template.descriptionJson,
-            descriptionText: template.descriptionText,
-            priority: template.priority,
-            startDate: dateRange.startDate,
-            endDate: dateRange.endDate,
-            sortOrder: this.nextCardOrder(targetColumn.id),
-            createdAt: now,
-            updatedAt: now,
-            labelIds: [],
-            subtasks: template.subtasks.map((subtask) => ({
-                id: randomUUID(),
-                title: subtask.title,
-                completed: false,
-                createdAt: now,
-                updatedAt: now
-            })),
-            comments: []
+    private listActiveFixedSeriesForGeneration(): RecurrenceGenerationSeries[] {
+        const rows = this.database
+            .prepare("SELECT * FROM kanban_recurrence_series WHERE trigger_mode = 'fixed' AND status = 'active'")
+            .all() as RecurrenceSeriesRow[];
+        return rows.map((row) => this.recurrenceSeriesForGeneration(row));
+    }
+
+    private updateSeriesLastOccurrenceDate(seriesId: string, lastOccurrenceDate: number, now: number): void {
+        this.database
+            .prepare("UPDATE kanban_recurrence_series SET last_occurrence_date = ?, updated_at = ? WHERE id = ?")
+            .run(lastOccurrenceDate, now, seriesId);
+    }
+
+    private recurrenceSeriesForGeneration(row: RecurrenceSeriesRow): RecurrenceGenerationSeries {
+        return {
+            id: row.id,
+            cycle: row.cycle,
+            status: row.status,
+            activeBatonCardId: row.active_baton_card_id ?? undefined,
+            templateJson: row.template_json,
+            lastOccurrenceDate: row.last_occurrence_date,
+            anchorDay: row.anchor_day
         };
+    }
+
+    private saveGeneratedOccurrence(record: GeneratedOccurrenceRecord): void {
         this.database.transaction(() => {
-            this.insertCard(card);
-            const validLabelIds = template.labelIds.filter((labelId) => this.labelBelongsToBoard(labelId, source.boardId));
             const insertCardLabel = this.database.prepare("INSERT OR IGNORE INTO kanban_card_labels (card_id, label_id) VALUES (?, ?)");
-            for (const labelId of validLabelIds) {
-                insertCardLabel.run(card.id, labelId);
+            this.insertCard(record.card);
+            for (const labelId of record.labelIds) {
+                insertCardLabel.run(record.card.id, labelId);
             }
             this.database
                 .prepare("UPDATE kanban_recurrence_occurrences SET generated_next_at = ? WHERE series_id = ? AND card_id = ?")
-                .run(now, series.id, source.id);
+                .run(record.now, record.seriesId, record.sourceCardId);
             this.database
                 .prepare("INSERT INTO kanban_recurrence_occurrences (series_id, card_id, occurrence_date, generated_next_at, created_at) VALUES (?, ?, ?, NULL, ?)")
-                .run(series.id, card.id, occurrenceDate, now);
+                .run(record.seriesId, record.card.id, record.occurrenceDate, record.now);
             this.database
                 .prepare(
                     `UPDATE kanban_recurrence_series
          SET active_baton_card_id = ?, last_occurrence_date = ?, anchor_day = ?, status = 'active', blocked_reason = NULL, updated_at = ?
            WHERE id = ?`
                 )
-                .run(card.id, occurrenceDate, new Date(occurrenceDate).getDate(), now, series.id);
-            this.touchBoard(source.boardId, now);
+                .run(record.card.id, record.occurrenceDate, new Date(record.occurrenceDate).getDate(), record.now, record.seriesId);
+            this.touchBoard(record.card.boardId, record.now);
         })();
-        return this.requireCard(card.id);
     }
 
     private ensureRecurrenceTargetColumn(boardId: string, now: number): KanbanColumn {
@@ -1031,29 +948,6 @@ function rowToColumn(row: ColumnRow): KanbanColumn {
     };
 }
 
-function rowToCard(row: CardRow): KanbanCard {
-    return {
-        id: row.id,
-        boardId: row.board_id,
-        columnId: row.column_id,
-        title: row.title,
-        descriptionMarkdown: row.description_markdown ?? undefined,
-        descriptionJson: parseRichText(row.description_json),
-        descriptionText: row.description_text ?? undefined,
-        subtasks: parseSubtasks(row.subtasks_json),
-        comments: parseComments(row.comments_json),
-        priority: row.priority,
-        dueDate: row.due_date ?? undefined,
-        startDate: row.start_date ?? undefined,
-        endDate: row.end_date ?? undefined,
-        sortOrder: row.sort_order,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-        archivedAt: row.archived_at ?? undefined,
-        labelIds: []
-    };
-}
-
 function rowToLabel(row: LabelRow): KanbanLabel {
     return {
         id: row.id,
@@ -1074,78 +968,8 @@ function normalizeOptionalText(value?: string): string | undefined {
     return next ? next : undefined;
 }
 
-function normalizeTimestamp(value: number | null | undefined, field: string): number | null {
-    if (value === undefined || value === null) return null;
-    if (!Number.isFinite(value)) throw new Error(`Invalid Kanban ${field}.`);
-    return Math.trunc(value);
-}
-
 function defaultColumnColor(index: number): string {
     return ["#9ca3af", "#3b82f6", "#f59e0b", "#22c55e"][index] ?? "#9ca3af";
-}
-
-function serializeRichText(value: KanbanRichTextDocument | undefined): string | null {
-    return value === undefined ? null : JSON.stringify(value);
-}
-
-function parseRichText(value: string | null): KanbanRichTextDocument | undefined {
-    if (!value) return undefined;
-    try {
-        return JSON.parse(value) as KanbanRichTextDocument;
-    } catch {
-        return undefined;
-    }
-}
-
-function serializeSubtasks(value: KanbanSubtask[] | undefined): string {
-    return JSON.stringify(value ?? []);
-}
-
-function parseSubtasks(value: string | null): KanbanSubtask[] {
-    if (!value) return [];
-    try {
-        const parsed = JSON.parse(value) as unknown;
-        return Array.isArray(parsed) ? parsed.filter(isSubtask) : [];
-    } catch {
-        return [];
-    }
-}
-
-function isSubtask(value: unknown): value is KanbanSubtask {
-    return Boolean(
-        value &&
-        typeof value === "object" &&
-        typeof (value as KanbanSubtask).id === "string" &&
-        typeof (value as KanbanSubtask).title === "string" &&
-        typeof (value as KanbanSubtask).completed === "boolean" &&
-        typeof (value as KanbanSubtask).createdAt === "number" &&
-        typeof (value as KanbanSubtask).updatedAt === "number"
-    );
-}
-
-function serializeComments(value: KanbanComment[] | undefined): string {
-    return JSON.stringify(value ?? []);
-}
-
-function parseComments(value: string | null): KanbanComment[] {
-    if (!value) return [];
-    try {
-        const parsed = JSON.parse(value) as unknown;
-        return Array.isArray(parsed) ? parsed.filter(isComment) : [];
-    } catch {
-        return [];
-    }
-}
-
-function isComment(value: unknown): value is KanbanComment {
-    return Boolean(
-        value &&
-        typeof value === "object" &&
-        typeof (value as KanbanComment).id === "string" &&
-        typeof (value as KanbanComment).body === "string" &&
-        typeof (value as KanbanComment).createdAt === "number" &&
-        typeof (value as KanbanComment).updatedAt === "number"
-    );
 }
 
 function normalizeRecurrenceTrigger(value: KanbanRecurrenceTrigger): KanbanRecurrenceTrigger {
@@ -1156,59 +980,6 @@ function normalizeRecurrenceTrigger(value: KanbanRecurrenceTrigger): KanbanRecur
 function normalizeRecurrenceCycle(value: KanbanRecurrenceCycle): KanbanRecurrenceCycle {
     if (!validRecurrenceCycles.has(value)) throw new Error(`Invalid Kanban recurrence cycle: ${value}`);
     return value;
-}
-
-function templateFromCard(card: KanbanCard): RecurrenceTemplate {
-    return {
-        title: card.title,
-        descriptionMarkdown: card.descriptionMarkdown,
-        descriptionJson: card.descriptionJson,
-        descriptionText: card.descriptionText,
-        priority: card.priority,
-        labelIds: card.labelIds,
-        subtasks: card.subtasks.map((subtask) => ({ ...subtask, completed: false }))
-    };
-}
-
-function serializeRecurrenceTemplate(value: RecurrenceTemplate): string {
-    return JSON.stringify(value);
-}
-
-function parseRecurrenceTemplate(value: string): RecurrenceTemplate | undefined {
-    try {
-        const parsed = JSON.parse(value) as Partial<RecurrenceTemplate>;
-        if (!parsed.title || !parsed.priority || !validPriorities.has(parsed.priority)) return undefined;
-        return {
-            title: parsed.title,
-            descriptionMarkdown: parsed.descriptionMarkdown,
-            descriptionJson: parsed.descriptionJson,
-            descriptionText: parsed.descriptionText,
-            priority: parsed.priority,
-            labelIds: Array.isArray(parsed.labelIds) ? parsed.labelIds.filter((labelId): labelId is string => typeof labelId === "string") : [],
-            subtasks: Array.isArray(parsed.subtasks) ? parsed.subtasks.filter(isSubtask).map((subtask) => ({ ...subtask, completed: false })) : []
-        };
-    } catch {
-        return undefined;
-    }
-}
-
-function remapTemplateLabels(value: string, labelIds: Map<string, string>): string {
-    const template = parseRecurrenceTemplate(value);
-    if (!template) return value;
-    return serializeRecurrenceTemplate({
-        ...template,
-        labelIds: template.labelIds.map((labelId) => labelIds.get(labelId)).filter((labelId): labelId is string => Boolean(labelId))
-    });
-}
-
-function occurrenceDateRange(source: KanbanCard, occurrenceDate: number): { startDate: number; endDate: number } {
-    const sourceStart = source.startDate ?? source.dueDate;
-    const sourceEnd = source.endDate ?? sourceStart;
-    if (sourceStart === undefined || sourceEnd === undefined) {
-        return { startDate: occurrenceDate, endDate: occurrenceDate };
-    }
-    const span = Math.max(0, dateOnlyTimestampFromTimestamp(sourceEnd) - dateOnlyTimestampFromTimestamp(sourceStart));
-    return { startDate: occurrenceDate, endDate: occurrenceDate + span };
 }
 
 function ensureSameBoard(boardId: string, ...columns: Array<KanbanColumn | undefined>): void {

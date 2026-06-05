@@ -78,7 +78,7 @@ describe("Card Editing State", () => {
         const onSave = vi.fn().mockResolvedValue(undefined);
         const { result } = renderHook(() => useCardEditingState({ card: testCard(), onSave, saveDelayMs: 25 }));
 
-        act(() => result.current.setTitle("Updated"));
+        act(() => result.current.updateTitle("Updated"));
         expect(onSave).not.toHaveBeenCalled();
 
         act(() => vi.advanceTimersByTime(24));
@@ -97,7 +97,7 @@ describe("Card Editing State", () => {
             initialProps: { card: firstCard }
         });
 
-        act(() => result.current.setTitle("Dirty first"));
+        act(() => result.current.updateTitle("Dirty first"));
         rerender({ card: secondCard });
 
         expect(result.current.title).toBe("Second");
@@ -131,6 +131,21 @@ describe("Card Editing State", () => {
             expect(result.current.addSubtask("  Third  ")).toBe(true);
         });
         expect(result.current.subtasks.map((subtask) => subtask.title)).toEqual(["First", "Third"]);
+    });
+
+    it("updates Description and Date Range through Card editing actions", () => {
+        const onSave = vi.fn().mockResolvedValue(undefined);
+        const { result } = renderHook(() => useCardEditingState({ card: testCard(), onSave, saveDelayMs: 25 }));
+        const descriptionJson = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Details" }] }] };
+
+        act(() => result.current.updateDateRange(123, 456));
+        expect(result.current.startDate).toBe(123);
+        expect(result.current.endDate).toBe(456);
+
+        act(() => result.current.updateDescription({ markdown: "", json: descriptionJson, text: "Details" }));
+        expect(result.current.descriptionMarkdown).toBe("");
+        expect(result.current.descriptionJson).toEqual(descriptionJson);
+        expect(result.current.descriptionText).toBe("Details");
     });
 
     it("mutates Comments through the hook interface", () => {
