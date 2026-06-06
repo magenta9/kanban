@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
-import { Moon, Sun } from "lucide-react";
+import { Monitor, Moon, Sun } from "lucide-react";
 import { KanbanPage } from "./tools/kanban/kanban";
 
 type ThemeMode = "light" | "dark";
+type ThemePreference = "system" | ThemeMode;
 
 const themeStorageKey = "kanban.theme";
 const themeMediaQuery = "(prefers-color-scheme: dark)";
 
-function isThemeMode(value: string | null): value is ThemeMode {
-  return value === "light" || value === "dark";
+function isThemePreference(value: string | null): value is ThemePreference {
+  return value === "system" || value === "light" || value === "dark";
 }
 
 function systemTheme(): ThemeMode {
@@ -16,25 +17,37 @@ function systemTheme(): ThemeMode {
   return window.matchMedia(themeMediaQuery).matches ? "dark" : "light";
 }
 
-function storedTheme(): ThemeMode | null {
-  if (typeof window === "undefined") return null;
+function storedThemePreference(): ThemePreference {
+  if (typeof window === "undefined") return "system";
   try {
     const value = window.localStorage.getItem(themeStorageKey);
-    return isThemeMode(value) ? value : null;
+    return isThemePreference(value) ? value : "system";
   } catch {
-    return null;
+    return "system";
+  }
+}
+
+function themePreferenceLabel(themePreference: ThemePreference): string {
+  switch (themePreference) {
+    case "system":
+      return "System";
+    case "light":
+      return "Light";
+    case "dark":
+      return "Dark";
   }
 }
 
 export function App(): JSX.Element {
-  const [theme, setTheme] = useState<ThemeMode>(() => storedTheme() ?? systemTheme());
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => storedThemePreference());
+  const [systemThemeMode, setSystemThemeMode] = useState<ThemeMode>(() => systemTheme());
+  const theme = themePreference === "system" ? systemThemeMode : themePreference;
 
   useEffect(() => {
-    const stored = storedTheme();
-    if (stored) return;
-
     const media = window.matchMedia(themeMediaQuery);
-    const handleChange = () => setTheme(media.matches ? "dark" : "light");
+    const handleChange = (event: MediaQueryListEvent) => {
+      setSystemThemeMode(event.matches ? "dark" : "light");
+    };
     media.addEventListener("change", handleChange);
     return () => media.removeEventListener("change", handleChange);
   }, []);
@@ -43,20 +56,23 @@ export function App(): JSX.Element {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
-  function chooseTheme(nextTheme: ThemeMode): void {
-    setTheme(nextTheme);
+  function chooseThemePreference(nextThemePreference: ThemePreference): void {
+    setThemePreference(nextThemePreference);
     try {
-      window.localStorage.setItem(themeStorageKey, nextTheme);
+      window.localStorage.setItem(themeStorageKey, nextThemePreference);
     } catch {
       // Theme persistence is optional; the in-memory switch should still work.
     }
   }
 
   function toggleTheme(): void {
-    chooseTheme(theme === "dark" ? "light" : "dark");
+    chooseThemePreference(nextThemePreference);
   }
 
-  const nextTheme = theme === "dark" ? "light" : "dark";
+  const nextThemePreference: ThemePreference =
+    themePreference === "system" ? "light" : themePreference === "light" ? "dark" : "system";
+  const currentThemeLabel = themePreferenceLabel(themePreference);
+  const nextThemeLabel = themePreferenceLabel(nextThemePreference);
 
   return (
     <main className="app-shell">
@@ -70,11 +86,17 @@ export function App(): JSX.Element {
       <button
         type="button"
         className="app-no-drag theme-switch"
-        aria-label={`Switch to ${nextTheme} theme`}
-        title={`Switch to ${nextTheme} theme`}
+        aria-label={`Theme: ${currentThemeLabel}. Switch to ${nextThemeLabel} mode`}
+        title={`Theme: ${currentThemeLabel}. Switch to ${nextThemeLabel} mode`}
         onClick={toggleTheme}
       >
-        {theme === "dark" ? <Sun size={16} /> : <Moon size={15} />}
+        {themePreference === "system" ? (
+          <Monitor size={16} />
+        ) : themePreference === "dark" ? (
+          <Sun size={16} />
+        ) : (
+          <Moon size={15} />
+        )}
       </button>
     </main>
   );

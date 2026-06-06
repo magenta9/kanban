@@ -11,7 +11,7 @@ pnpm run dev
 
 ## 主题
 
-应用首次打开会按系统 `prefers-color-scheme` 选择浅色/深色主题；左下角的太阳/月亮按钮可手动切换，并会把选择保存在本地。
+应用默认使用 System 模式，按系统 `prefers-color-scheme` 自动选择浅色/深色主题，并会随系统变化更新。左下角按钮可在 System、Light、Dark 三种模式间循环，并会把选择保存在本地。
 
 ## 验证
 
