@@ -338,10 +338,13 @@ export class KanbanRepository {
         const nextDescriptionText = input.patch.descriptionText === undefined
             ? (input.patch.descriptionMarkdown === undefined ? current.descriptionText ?? null : markdownToPlainText(input.patch.descriptionMarkdown) ?? null)
             : normalizeOptionalText(input.patch.descriptionText) ?? null;
+        const nextGitRepositoryPath = input.patch.gitRepositoryPath === undefined
+            ? current.gitRepositoryPath ?? null
+            : input.patch.gitRepositoryPath === null ? null : normalizeOptionalText(input.patch.gitRepositoryPath) ?? null;
         this.database
             .prepare(
                 `UPDATE kanban_cards
-         SET title = ?, column_id = ?, description_markdown = ?, description_json = ?, description_text = ?, subtasks_json = ?, comments_json = ?, priority = ?, due_date = ?, start_date = ?, end_date = ?, updated_at = ?
+         SET title = ?, column_id = ?, description_markdown = ?, description_json = ?, description_text = ?, git_repository_path = ?, subtasks_json = ?, comments_json = ?, priority = ?, due_date = ?, start_date = ?, end_date = ?, updated_at = ?
          WHERE id = ?`
             )
             .run(
@@ -350,6 +353,7 @@ export class KanbanRepository {
                 nextDescriptionMarkdown,
                 input.patch.descriptionJson === undefined ? serializeRichText(current.descriptionJson) : serializeRichText(input.patch.descriptionJson),
                 nextDescriptionText,
+                nextGitRepositoryPath,
                 input.patch.subtasks === undefined ? serializeSubtasks(current.subtasks) : serializeSubtasks(input.patch.subtasks),
                 input.patch.comments === undefined ? serializeComments(current.comments) : serializeComments(input.patch.comments),
                 nextPriority,
@@ -362,6 +366,29 @@ export class KanbanRepository {
         this.touchBoard(current.boardId, updatedAt);
         this.recurrence.afterCardUpdated(input.id, updatedAt);
         return this.requireCard(input.id);
+    }
+
+    addCardComment(input: { cardId: string; body: string }): KanbanCard {
+        const card = this.requireCard(input.cardId);
+        const body = input.body.trim();
+        if (!body) {
+            throw new Error("Comment body is required.");
+        }
+        const now = Date.now();
+        return this.updateCard({
+            id: input.cardId,
+            patch: {
+                comments: [
+                    ...card.comments,
+                    {
+                        id: randomUUID(),
+                        body,
+                        createdAt: now,
+                        updatedAt: now
+                    }
+                ]
+            }
+        });
     }
 
     deleteCard(input: { id: string }): void {
@@ -640,8 +667,8 @@ export class KanbanRepository {
         this.database
             .prepare(
                 `INSERT INTO kanban_cards
-         (id, board_id, column_id, title, description_markdown, description_json, description_text, subtasks_json, comments_json, priority, due_date, start_date, end_date, sort_order, created_at, updated_at, archived_at)
-         VALUES (@id, @boardId, @columnId, @title, @descriptionMarkdown, @descriptionJson, @descriptionText, @subtasksJson, @commentsJson, @priority, @dueDate, @startDate, @endDate, @sortOrder, @createdAt, @updatedAt, @archivedAt)`
+         (id, board_id, column_id, title, description_markdown, description_json, description_text, git_repository_path, subtasks_json, comments_json, priority, due_date, start_date, end_date, sort_order, created_at, updated_at, archived_at)
+         VALUES (@id, @boardId, @columnId, @title, @descriptionMarkdown, @descriptionJson, @descriptionText, @gitRepositoryPath, @subtasksJson, @commentsJson, @priority, @dueDate, @startDate, @endDate, @sortOrder, @createdAt, @updatedAt, @archivedAt)`
             )
             .run(cardToInsertParams(card));
     }

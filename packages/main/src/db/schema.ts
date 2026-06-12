@@ -37,6 +37,7 @@ export function migrate(database: Database.Database): void {
       description_markdown TEXT,
       description_json TEXT,
       description_text TEXT,
+      git_repository_path TEXT,
       subtasks_json TEXT NOT NULL DEFAULT '[]',
       comments_json TEXT NOT NULL DEFAULT '[]',
       priority TEXT NOT NULL DEFAULT 'none',
@@ -98,10 +99,36 @@ export function migrate(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_kanban_recurrence_occurrences_card
       ON kanban_recurrence_occurrences(card_id);
+
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id TEXT PRIMARY KEY,
+      card_id TEXT NOT NULL REFERENCES kanban_cards(id) ON DELETE CASCADE,
+      paseo_agent_id TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      provider_name TEXT NOT NULL,
+      mode_label TEXT,
+      repo_root TEXT NOT NULL,
+      worktree_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      last_error TEXT,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_status_updated
+      ON agent_runs(status, updated_at);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_one_running_per_card
+      ON agent_runs(card_id)
+      WHERE status = 'running';
   `);
 
   ensureColumn(database, "kanban_boards", "completion_column_id", "TEXT");
   ensureColumn(database, "kanban_cards", "description_markdown", "TEXT");
+  ensureColumn(database, "kanban_cards", "git_repository_path", "TEXT");
   ensureColumn(database, "kanban_cards", "subtasks_json", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(database, "kanban_cards", "comments_json", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(database, "kanban_cards", "start_date", "INTEGER");

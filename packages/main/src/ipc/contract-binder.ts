@@ -12,9 +12,10 @@ export function bindInvoke<TResult>(
 }
 
 export function allDeclaredInvokeChannels(): string[] {
+  const { cardCommentsChanged: _cardCommentsChanged, ...kanbanInvokeChannels } = ipcChannels.kanban;
   return [
     ipcChannels.system.getStatus,
     ...Object.values(ipcChannels.ai),
-    ...Object.values(ipcChannels.kanban)
+    ...Object.values(kanbanInvokeChannels)
   ];
 }

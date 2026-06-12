@@ -9,6 +9,7 @@ export interface CardRow {
     description_markdown: string | null;
     description_json: string | null;
     description_text: string | null;
+    git_repository_path: string | null;
     subtasks_json: string;
     comments_json: string;
     priority: KanbanCard["priority"];
@@ -29,6 +30,7 @@ export interface CardInsertParams {
     descriptionMarkdown: string | null;
     descriptionJson: string | null;
     descriptionText: string | null;
+    gitRepositoryPath: string | null;
     subtasksJson: string;
     commentsJson: string;
     priority: KanbanCard["priority"];
@@ -50,6 +52,7 @@ export function rowToCard(row: CardRow): KanbanCard {
         descriptionMarkdown: row.description_markdown ?? undefined,
         descriptionJson: parseRichText(row.description_json),
         descriptionText: row.description_text ?? undefined,
+        gitRepositoryPath: row.git_repository_path ?? undefined,
         subtasks: parseSubtasks(row.subtasks_json),
         comments: parseComments(row.comments_json),
         priority: row.priority,
@@ -70,6 +73,7 @@ export function cardToInsertParams(card: KanbanCard): CardInsertParams {
         descriptionMarkdown: card.descriptionMarkdown ?? null,
         descriptionJson: serializeRichText(card.descriptionJson),
         descriptionText: card.descriptionText ?? markdownToPlainText(card.descriptionMarkdown) ?? null,
+        gitRepositoryPath: card.gitRepositoryPath ?? null,
         subtasksJson: serializeSubtasks(card.subtasks),
         commentsJson: serializeComments(card.comments),
         dueDate: normalizeTimestamp(card.dueDate, "dueDate"),

@@ -48,6 +48,7 @@ export function kanbanCardUpdatePatch(patch: Partial<KanbanCardPatch>): Partial<
         descriptionMarkdown: patch.descriptionMarkdown,
         descriptionJson: patch.descriptionJson,
         descriptionText: patch.descriptionText,
+        gitRepositoryPath: patch.gitRepositoryPath,
         priority: patch.priority,
         subtasks: patch.subtasks,
         comments: patch.comments

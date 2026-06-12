@@ -52,6 +52,7 @@ export interface KanbanCard {
     descriptionMarkdown?: string;
     descriptionJson?: KanbanRichTextDocument;
     descriptionText?: string;
+    gitRepositoryPath?: string;
     priority: KanbanPriority;
     dueDate?: number;
     startDate?: number;
@@ -133,6 +134,7 @@ export interface KanbanCardPatch {
     descriptionMarkdown?: string;
     descriptionJson?: KanbanRichTextDocument;
     descriptionText?: string;
+    gitRepositoryPath?: string | null;
     priority: KanbanPriority;
     dueDate?: number | null;
     startDate?: number | null;
@@ -274,4 +276,34 @@ export interface AiLabelSuggestion {
 
 export interface AiLabelSuggestionResult {
     suggestions: AiLabelSuggestion[];
+}
+
+export interface KanbanAgentInfo {
+    id: string;
+    name: string;
+}
+
+export interface KanbanCardCommentsChangedEvent {
+    boardId: string;
+    cardId: string;
+}
+
+export interface ValidateKanbanAgentRepoResult {
+    ok: boolean;
+    path: string;
+    repoRoot?: string;
+    message?: string;
+}
+
+export interface StartKanbanAgentRunInput {
+    cardId: string;
+    agentId: string;
+}
+
+export interface StartKanbanAgentRunResult {
+    card: KanbanCard;
+    agent: KanbanAgentInfo;
+    paseoAgentId: string;
+    status: "started";
+    summary: string;
 }

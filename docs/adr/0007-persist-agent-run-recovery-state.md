@@ -1,0 +1,3 @@
+# Persist agent run recovery state
+
+Kanban should persist Agent Run recovery state in a local `agent_runs` table so a restarted main process can best-effort complete the card reporting it promised with a finish Comment. We chose this over relying on in-memory background waits or parsing Comments because the app may close while a detached Paseo agent is still running, while Comments are user-facing card context rather than a recovery state machine. Paseo remains the owner of provider execution, worktrees, logs, and run lifecycle; Kanban stores only enough state to recover card reporting, does not stop or delete Paseo runs when local recording fails, and treats `recovery_failed` as a terminal best-effort outcome.

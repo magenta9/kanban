@@ -6,6 +6,8 @@ import { execFile } from "node:child_process";
 import { openKanbanDatabase } from "./db/services";
 import { KanbanRepository } from "./db/repositories/kanban-repository";
 import { AiSettingsService } from "./ai/settings-service";
+import { AgentRunRepository } from "./agent/agent-run-repository";
+import { AgentRunService } from "./agent/agent-run-service";
 import { resolveKanbanPaths } from "./storage/path-service";
 import { registerIpc } from "./ipc/register";
 
@@ -167,12 +169,24 @@ app.whenReady().then(async () => {
   mkdirSync(paths.root, { recursive: true });
   const database = openKanbanDatabase(paths.databasePath);
   const kanbanRepository = new KanbanRepository(database);
+  const agentRunRepository = new AgentRunRepository(database);
   const aiSettings = new AiSettingsService({ settingsPath: paths.aiSettingsPath, logPath: paths.aiLogPath });
+  const agentRuns = new AgentRunService(kanbanRepository, agentRunRepository, {
+    onCardCommentsChanged: (event) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send(ipcChannels.kanban.cardCommentsChanged, event);
+      }
+    }
+  });
   registerIpc({
     kanban: kanbanRepository,
-    ai: aiSettings
+    ai: aiSettings,
+    agent: agentRuns
   });
   startRecurrenceScanner(kanbanRepository);
+  void agentRuns.recoverRunningRuns().catch((caught) => {
+    console.error("Failed to recover running Agent Runs", caught);
+  });
 
   await createWindow();
 });

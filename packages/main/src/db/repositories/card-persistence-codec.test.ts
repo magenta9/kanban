@@ -10,6 +10,7 @@ function cardRow(input: Partial<CardRow> = {}): CardRow {
         description_markdown: "## Scope\n\n- Ship notes",
         description_json: null,
         description_text: "Scope\nShip notes",
+        git_repository_path: null,
         subtasks_json: "[]",
         comments_json: "[]",
         priority: "medium",
@@ -43,6 +44,7 @@ describe("Card persistence codec", () => {
             boardId: "board-1",
             columnId: "column-1",
             descriptionJson: undefined,
+            gitRepositoryPath: undefined,
             comments: [],
             dueDate: 10,
             startDate: 10,
@@ -72,6 +74,7 @@ describe("Card persistence codec", () => {
         expect(params).toMatchObject({
             descriptionMarkdown: "## Scope\n\n- Ship notes",
             descriptionText: "Scope\nShip notes",
+            gitRepositoryPath: null,
             dueDate: 10,
             startDate: 10,
             endDate: 10,

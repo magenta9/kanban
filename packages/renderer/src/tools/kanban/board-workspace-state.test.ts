@@ -67,7 +67,16 @@ function createApi(input: {
             disableCardRecurrence: vi.fn(async ({ cardId }) => testCard(cardId)),
             generateDueRecurrences: vi.fn(async () => undefined),
             exportBoard: vi.fn(),
-            importBoard: vi.fn()
+            importBoard: vi.fn(),
+            onCardCommentsChanged: vi.fn(() => () => undefined)
+        },
+        agent: {
+            listAvailable: vi.fn(async () => []),
+            selectRepoPath: vi.fn(async () => null),
+            validateRepoPath: vi.fn(async ({ path }) => ({ ok: false, path, message: "Not a git repo" })),
+            startRun: vi.fn(async () => {
+                throw new Error("No agent available");
+            })
         },
         ai: {} as PreloadApi["ai"],
         system: {} as PreloadApi["system"]
@@ -109,6 +118,7 @@ describe("Board Workspace State", () => {
             descriptionMarkdown: undefined,
             descriptionJson: undefined,
             descriptionText: undefined,
+            gitRepositoryPath: undefined,
             priority: undefined,
             subtasks: undefined,
             comments: undefined,

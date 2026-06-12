@@ -1,14 +1,16 @@
-import { app, ipcMain, shell } from "electron";
+import { app, dialog, ipcMain, shell } from "electron";
 import { ipcChannels } from "@kanban/shared";
 import type { KanbanRepository } from "../db/repositories/kanban-repository";
 import type { AiSettingsService } from "../ai/settings-service";
 import { AiSuggestionService } from "../ai/suggestion-service";
+import type { AgentRunService } from "../agent/agent-run-service";
 import { KanbanHandlers } from "./kanban";
 import { bindInvoke } from "./contract-binder";
 
 export interface IpcServiceContext {
   kanban: KanbanRepository;
   ai: AiSettingsService;
+  agent: AgentRunService;
 }
 
 export function registerIpc(context: IpcServiceContext): void {
@@ -30,6 +32,17 @@ export function registerIpc(context: IpcServiceContext): void {
   });
   bindInvoke(ipcMain, ipcChannels.ai.suggestText, (input) => suggestions.suggestText(input));
   bindInvoke(ipcMain, ipcChannels.ai.suggestLabels, (input) => suggestions.suggestLabels(input));
+
+  bindInvoke(ipcMain, ipcChannels.agent.listAvailable, () => context.agent.listAvailable());
+  bindInvoke(ipcMain, ipcChannels.agent.selectRepoPath, async () => {
+    const result = await dialog.showOpenDialog({
+      title: "Choose a Git repository",
+      properties: ["openDirectory"]
+    });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  bindInvoke(ipcMain, ipcChannels.agent.validateRepoPath, (input) => context.agent.validateRepoPath(input));
+  bindInvoke(ipcMain, ipcChannels.agent.startRun, (input) => context.agent.startRun(input));
 
   bindInvoke(ipcMain, ipcChannels.kanban.listBoards, () => kanban.listBoards());
   bindInvoke(ipcMain, ipcChannels.kanban.createBoard, (input) => kanban.createBoard(input));

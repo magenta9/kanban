@@ -12,6 +12,12 @@ export const ipcChannels = {
     suggestText: "ai:suggest-text",
     suggestLabels: "ai:suggest-labels"
   },
+  agent: {
+    listAvailable: "agent:list-available",
+    selectRepoPath: "agent:select-repo-path",
+    validateRepoPath: "agent:validate-repo-path",
+    startRun: "agent:start-run"
+  },
   kanban: {
     listBoards: "kanban:list-boards",
     createBoard: "kanban:create-board",
@@ -40,7 +46,8 @@ export const ipcChannels = {
     disableCardRecurrence: "kanban:disable-card-recurrence",
     generateDueRecurrences: "kanban:generate-due-recurrences",
     exportBoard: "kanban:export-board",
-    importBoard: "kanban:import-board"
+    importBoard: "kanban:import-board",
+    cardCommentsChanged: "kanban:card-comments-changed"
   }
 } as const;
 

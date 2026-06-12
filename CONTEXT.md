@@ -57,11 +57,31 @@ A card that has been removed from the board's current work context without being
 **Card Title**:
 The short name of a card. References to title completion in this context mean Card Title completion, not Board or Column naming.
 
+**Card Binding**:
+An external resource attached to a card because it is part of that card's work context. A Git repository path is a Card Binding; it is not an Agent Provider setting or an Agent Run input.
+_Avoid_: Agent repository, run repository
+
 **Description**:
 A Markdown-formatted body of a card that captures the card's main details.
 
 **Comment**:
 A Markdown-formatted note attached to a card as part of the card's working context.
+
+**Agent Run**:
+A request from a card to have an external coding agent work on that card and report back into the card's working context. An Agent Run is prompted with the card's requirement context, not repository execution context, and reports by adding a start Comment and a best-effort finish Comment; it does not continuously stream progress into Comments.
+_Avoid_: Agent task, execution job
+
+**Agent Run Recovery**:
+A best-effort attempt to complete an Agent Run's card reporting after Kanban regains the ability to observe the external agent. Recovery exists to preserve the card's working context, not to guarantee the external agent's outcome.
+_Avoid_: Replay, guaranteed completion
+
+**Agent Run Requirement Context**:
+The card-derived requirement information sent to an Agent Run. It begins with `/goal`, includes the Card Title as the requirement title, Subtasks, and human-written Comments, and excludes the Description and prior Agent Run Comments.
+_Avoid_: Repository context, execution context
+
+**Agent Provider**:
+An available external coding agent option selected for an Agent Run.
+_Avoid_: Agent binary, CLI command
 
 **Label**:
 A board-scoped marker that can be attached to cards for categorization. A Label has a stable board-scoped color for its name, and labels with the same normalized name on a board should be treated as the same label. UI text may call labels "Tags", but domain language should use Label.

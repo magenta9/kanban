@@ -9,15 +9,20 @@ import type {
   AiTestConnectionResult,
   AiTextSuggestionInput,
   AiTextSuggestionResult,
+  KanbanAgentInfo,
   EnableKanbanRecurrenceInput,
   KanbanBoard,
   KanbanBoardExport,
   KanbanCard,
+  KanbanCardCommentsChangedEvent,
   KanbanCardPatch,
   KanbanColumn,
   KanbanColumnPatch,
   KanbanLabel,
   SaveAiSettingsInput,
+  StartKanbanAgentRunInput,
+  StartKanbanAgentRunResult,
+  ValidateKanbanAgentRepoResult,
   UpdateKanbanRecurrenceInput
 } from "./types/kanban";
 
@@ -41,6 +46,12 @@ export interface IpcContract {
     openLogFile(): Promise<void>;
     suggestText(input: AiTextSuggestionInput): Promise<AiTextSuggestionResult>;
     suggestLabels(input: AiLabelSuggestionInput): Promise<AiLabelSuggestionResult>;
+  };
+  agent: {
+    listAvailable(): Promise<KanbanAgentInfo[]>;
+    selectRepoPath(): Promise<string | null>;
+    validateRepoPath(input: { path: string }): Promise<ValidateKanbanAgentRepoResult>;
+    startRun(input: StartKanbanAgentRunInput): Promise<StartKanbanAgentRunResult>;
   };
   kanban: {
     listBoards(): Promise<KanbanBoard[]>;
@@ -79,6 +90,9 @@ export interface IpcEvents {
     onShowKeyboardShortcuts(callback: () => void): Unsubscribe;
     onShowAiSettings(callback: () => void): Unsubscribe;
   };
+  kanban: {
+    onCardCommentsChanged(callback: (event: KanbanCardCommentsChangedEvent) => void): Unsubscribe;
+  };
 }
 
 export type PreloadApi = IpcContract & IpcEvents;
@@ -91,6 +105,10 @@ export const ipcContractHandlers = [
   "ai.openLogFile",
   "ai.suggestText",
   "ai.suggestLabels",
+  "agent.listAvailable",
+  "agent.selectRepoPath",
+  "agent.validateRepoPath",
+  "agent.startRun",
   "kanban.listBoards",
   "kanban.createBoard",
   "kanban.renameBoard",

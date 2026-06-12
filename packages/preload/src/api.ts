@@ -23,6 +23,12 @@ export const api: PreloadApi = {
     suggestText: (input) => ipcRenderer.invoke(ipcChannels.ai.suggestText, input),
     suggestLabels: (input) => ipcRenderer.invoke(ipcChannels.ai.suggestLabels, input)
   },
+  agent: {
+    listAvailable: () => ipcRenderer.invoke(ipcChannels.agent.listAvailable),
+    selectRepoPath: () => ipcRenderer.invoke(ipcChannels.agent.selectRepoPath),
+    validateRepoPath: (input) => ipcRenderer.invoke(ipcChannels.agent.validateRepoPath, input),
+    startRun: (input) => ipcRenderer.invoke(ipcChannels.agent.startRun, input)
+  },
   kanban: {
     listBoards: () => ipcRenderer.invoke(ipcChannels.kanban.listBoards),
     createBoard: (input) => ipcRenderer.invoke(ipcChannels.kanban.createBoard, input),
@@ -51,6 +57,11 @@ export const api: PreloadApi = {
     disableCardRecurrence: (input) => ipcRenderer.invoke(ipcChannels.kanban.disableCardRecurrence, input),
     generateDueRecurrences: (input) => ipcRenderer.invoke(ipcChannels.kanban.generateDueRecurrences, input),
     exportBoard: (input) => ipcRenderer.invoke(ipcChannels.kanban.exportBoard, input),
-    importBoard: (input) => ipcRenderer.invoke(ipcChannels.kanban.importBoard, input)
+    importBoard: (input) => ipcRenderer.invoke(ipcChannels.kanban.importBoard, input),
+    onCardCommentsChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof callback>[0]) => callback(payload);
+      ipcRenderer.on(ipcChannels.kanban.cardCommentsChanged, listener);
+      return () => ipcRenderer.removeListener(ipcChannels.kanban.cardCommentsChanged, listener);
+    }
   }
 };
