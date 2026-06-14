@@ -25,6 +25,7 @@ import type {
   ValidateKanbanAgentRepoResult,
   UpdateKanbanRecurrenceInput
 } from "./types/kanban";
+import { ipcInvokeHandlerNames, type IpcInvokeHandlerName } from "./ipc-invoke-registry";
 
 export interface SystemStatus {
   appName: "Kanban";
@@ -97,46 +98,15 @@ export interface IpcEvents {
 
 export type PreloadApi = IpcContract & IpcEvents;
 
-export const ipcContractHandlers = [
-  "system.getStatus",
-  "ai.getSettings",
-  "ai.saveSettings",
-  "ai.testConnection",
-  "ai.openLogFile",
-  "ai.suggestText",
-  "ai.suggestLabels",
-  "agent.listAvailable",
-  "agent.selectRepoPath",
-  "agent.validateRepoPath",
-  "agent.startRun",
-  "kanban.listBoards",
-  "kanban.createBoard",
-  "kanban.renameBoard",
-  "kanban.deleteBoard",
-  "kanban.listColumns",
-  "kanban.createColumn",
-  "kanban.updateColumn",
-  "kanban.setCompletionColumn",
-  "kanban.reorderColumn",
-  "kanban.archiveColumn",
-  "kanban.restoreColumn",
-  "kanban.listCards",
-  "kanban.createCard",
-  "kanban.updateCard",
-  "kanban.deleteCard",
-  "kanban.archiveCard",
-  "kanban.restoreCard",
-  "kanban.reorderCard",
-  "kanban.listLabels",
-  "kanban.createLabel",
-  "kanban.deleteLabel",
-  "kanban.setCardLabels",
-  "kanban.enableCardRecurrence",
-  "kanban.updateCardRecurrence",
-  "kanban.disableCardRecurrence",
-  "kanban.generateDueRecurrences",
-  "kanban.exportBoard",
-  "kanban.importBoard"
-] as const;
+type ContractInvokeHandlerNames<TModule, TPrefix extends string = ""> = {
+  [TKey in keyof TModule & string]: TModule[TKey] extends (...args: any[]) => Promise<unknown>
+    ? `${TPrefix}${TKey}`
+    : ContractInvokeHandlerNames<TModule[TKey], `${TPrefix}${TKey}.`>
+}[keyof TModule & string];
 
-export type IpcContractHandlerName = (typeof ipcContractHandlers)[number];
+type AssertNoContractDrift<TValue extends never> = TValue;
+type _MissingContractHandlerCheck = AssertNoContractDrift<Exclude<ContractInvokeHandlerNames<IpcContract>, IpcInvokeHandlerName>>;
+type _ExtraContractHandlerCheck = AssertNoContractDrift<Exclude<IpcInvokeHandlerName, ContractInvokeHandlerNames<IpcContract>>>;
+
+export const ipcContractHandlers = ipcInvokeHandlerNames;
+export type IpcContractHandlerName = IpcInvokeHandlerName;
