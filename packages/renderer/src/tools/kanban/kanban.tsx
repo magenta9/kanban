@@ -63,7 +63,6 @@ import {
 import {
     applyRichTextListContinuation,
     applyRichTextListIndentation,
-    draftCardsForAiContext,
     findRichTextMarkdownLinkSuffix,
     formatDateRange,
     isEditableShortcutTarget,
@@ -76,7 +75,6 @@ import {
     normalizeDateRange,
     recurrenceSummary,
     resolveMarkdownTextareaListShortcut,
-    relatedCardsForAiContext,
     resolveRichTextLinkPaste,
     shouldSyncRichTextEditorContent,
     suggestBoardLabelsByPrefix
@@ -930,10 +928,9 @@ function sortedCardsInColumn(cards: KanbanCard[], columnId: string): KanbanCard[
     return cards.filter((card) => card.columnId === columnId).sort((left, right) => left.sortOrder - right.sortOrder);
 }
 
-function cardAiContext(card: KanbanCard, cards: KanbanCard[], labels: KanbanLabel[], columns: KanbanColumn[]): AiSuggestionCardContext {
+function cardAiContext(card: KanbanCard, labels: KanbanLabel[], columns: KanbanColumn[]): AiSuggestionCardContext {
     return {
         currentCard: card,
-        relatedCards: relatedCardsForAiContext(card, cards),
         boardLabels: labels,
         columnName: columns.find((column) => column.id === card.columnId)?.name
     };
@@ -1363,7 +1360,7 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
         descriptionText,
         subtasks,
         comments
-    }, cards, labels, columns), [card, cards, columns, comments, descriptionJson, descriptionMarkdown, descriptionText, labels, columnId, priority, startDate, endDate, subtasks, title]);
+    }, labels, columns), [card, columns, comments, descriptionJson, descriptionMarkdown, descriptionText, labels, columnId, priority, startDate, endDate, subtasks, title]);
     const subtaskSensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
         useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })

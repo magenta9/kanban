@@ -48,7 +48,13 @@ describe("AI text suggestion normalization", () => {
             textBeforeCursor: "补齐",
             textAfterCursor: "",
             maxChars: 12,
-            context: { currentCard: testCard({ descriptionText: "需要补齐发布检查项和验收标准", subtasks: [{ id: "subtask-1", title: "确认发布检查项", completed: false, createdAt: 1, updatedAt: 1 }] }), relatedCards: [], boardLabels: [] }
+            context: {
+                currentCard: testCard({
+                    descriptionText: "需要补齐发布检查项和验收标准",
+                    subtasks: [{ id: "subtask-1", title: "确认发布检查项", completed: false, createdAt: 1, updatedAt: 1 }]
+                }),
+                boardLabels: []
+            }
         })).resolves.toEqual({ suggestion: "验收标准" });
     });
 
@@ -67,7 +73,7 @@ describe("AI text suggestion normalization", () => {
             textBeforeCursor: "复盘",
             textAfterCursor: "",
             maxChars: 20,
-            context: { relatedCards: [], boardLabels: [] }
+            context: { boardLabels: [] }
         };
 
         expect(resolveTextSuggestion('{"insert":"持有标的"}', input).decision).toEqual({ status: "accepted", reason: "accepted" });
@@ -107,7 +113,7 @@ describe("AI text suggestions", () => {
             textBeforeCursor: "复盘持有标的",
             textAfterCursor: "",
             maxChars: 20,
-            context: { relatedCards: [], boardLabels: [] }
+            context: { boardLabels: [] }
         })).resolves.toEqual({ suggestion: "估值变化" });
         expect(fetch).toHaveBeenCalledOnce();
     });
@@ -143,7 +149,6 @@ describe("AI text suggestions", () => {
                         { id: "comment-1", body: "可以补充趋势线指标作为辅助信号", createdAt: 1, updatedAt: 1 }
                     ]
                 }),
-                relatedCards: [],
                 boardLabels: [
                     { id: "label-1", boardId: "board-1", name: "agent", color: "#64748b" },
                     { id: "label-2", boardId: "board-1", name: "trade", color: "#22c55e" }
@@ -175,7 +180,6 @@ describe("AI text suggestions", () => {
                     title: "构建流程",
                     descriptionText: "需要补充构建流程的关键步骤和验证方式。"
                 }),
-                relatedCards: [],
                 boardLabels: []
             }
         })).resolves.toEqual({});
@@ -208,7 +212,6 @@ describe("AI text suggestions", () => {
                     title: "周报指标",
                     descriptionText: "| 指标 | 当前值 |\n|---|---|\n| 完成率 | 85% |\n| 风险点 | 待确认 |"
                 }),
-                relatedCards: [],
                 boardLabels: []
             }
         })).resolves.toEqual({ suggestion: "完成率" });
@@ -223,7 +226,6 @@ describe("AI text suggestions", () => {
                     title: "接口配置",
                     descriptionText: "配置示例需要设置 timeout 为 30000，并保留 retry 为 3。"
                 }),
-                relatedCards: [],
                 boardLabels: []
             }
         })).resolves.toEqual({});
@@ -245,7 +247,6 @@ describe("AI text suggestions", () => {
             maxChars: 12,
             context: {
                 currentCard: testCard({ title: "趋势交易的agent", descriptionText: "方案3:观察" }),
-                relatedCards: [],
                 boardLabels: []
             }
         })).resolves.toEqual({ suggestion: "小级别趋势变化，并补充进场条件和止损触发逻辑。" });
@@ -268,7 +269,6 @@ describe("AI text suggestions", () => {
                     title: "持仓复盘",
                     descriptionText: "需要分析持有标的的仓位、盈亏和风险点。"
                 }),
-                relatedCards: [],
                 boardLabels: []
             }
         })).resolves.toEqual({ suggestion: "风险" });
@@ -291,7 +291,6 @@ describe("AI text suggestions", () => {
                     title: "周报指标",
                     descriptionText: "| 指标 | 当前值 |\n|---|---|\n| 完成率 | 85% |\n| 风险点 | 待确认 |"
                 }),
-                relatedCards: [],
                 boardLabels: []
             }
         })).resolves.toEqual({ suggestion: "80%" });
@@ -311,7 +310,6 @@ describe("AI text suggestions", () => {
             maxChars: 24,
             context: {
                 currentCard: testCard({ title: "趋势交易的agent" }),
-                relatedCards: [],
                 boardLabels: []
             }
         })).resolves.toEqual({});
@@ -345,7 +343,6 @@ describe("AI text suggestions", () => {
                         { id: "comment-2", body: "需要先恢复权限", createdAt: 2, updatedAt: 2 }
                     ]
                 }),
-                relatedCards: [],
                 boardLabels: []
             }
         })).resolves.toEqual({ suggestion: "权限问题" });
@@ -415,7 +412,6 @@ describe("AI label suggestions", () => {
         await expect(suggestions.suggestLabels({
             context: {
                 currentCard: card,
-                relatedCards: [],
                 boardLabels: [
                     { id: "label-1", boardId: "board-1", name: "Bug", color: "#ef4444" },
                     { id: "label-2", boardId: "board-1", name: "Dev", color: "#64748b" },
@@ -462,7 +458,7 @@ describe("AI prompt contracts", () => {
             textBeforeCursor: "覆盖范围：需要分析持有标的的仓位、盈亏和风险点\n1.需要明确分析的具体标的范围、历史数据获取方式以及预期输出格式。\n2.",
             textAfterCursor: "",
             maxChars: 50,
-            context: { relatedCards: [], boardLabels: [] }
+            context: { boardLabels: [] }
         })).resolves.toEqual({});
 
         expect(fetch).not.toHaveBeenCalled();
@@ -493,7 +489,6 @@ describe("AI prompt contracts", () => {
             maxChars: 50,
             context: {
                 currentCard: testCard({ title: "结构化分析标的", descriptionText: "主要是包含一些标的：纳斯达克、标普、" }),
-                relatedCards: [],
                 boardLabels: [
                     { id: "label-1", boardId: "board-1", name: "Design", color: "#64748b" },
                     { id: "label-2", boardId: "board-1", name: "Trade", color: "#22c55e" }
@@ -532,7 +527,6 @@ describe("AI prompt contracts", () => {
                         { id: "comment-1", body: "现在的考虑是可以搞成一个notion技能，然后实现自动化采集期货软件的界面截图数据，然后让AI分析是否适合合适的买点", createdAt: 1, updatedAt: 1 }
                     ]
                 }),
-                relatedCards: [],
                 boardLabels: [
                     { id: "label-1", boardId: "board-1", name: "agent", color: "#64748b" },
                     { id: "label-2", boardId: "board-1", name: "trade", color: "#22c55e" }
@@ -568,7 +562,6 @@ describe("AI prompt contracts", () => {
                     title: "趋势交易的agent",
                     descriptionText: "先整理出流程文章，然后再思考怎么弄成agent定时执行\n\n优化趋势交易信号\n\n1. 1w、2w同向方向一致才是方向一致\n2. 寻找其他趋势线\n方案3:观察小级别"
                 }),
-                relatedCards: [],
                 boardLabels: []
             }
         })).resolves.toEqual({});
@@ -642,7 +635,6 @@ describe("AI prompt contracts", () => {
                         { id: "subtask-2", title: "同步测试结果", completed: false, createdAt: 1, updatedAt: 1 }
                     ]
                 }),
-                relatedCards: [],
                 boardLabels: [{ id: "label-1", boardId: "board-1", name: "Dev", color: "#64748b" }]
             }
         })).resolves.toEqual({ suggestion: "验收标准" });
@@ -666,7 +658,6 @@ describe("AI prompt contracts", () => {
                         { id: "subtask-2", title: "确认回归结论", completed: false, createdAt: 1, updatedAt: 1 }
                     ]
                 }),
-                relatedCards: [],
                 boardLabels: []
             }
         })).resolves.toEqual({});
@@ -694,7 +685,10 @@ describe("AI prompt contracts", () => {
             textBeforeCursor: "嗯",
             textAfterCursor: "",
             maxChars: 20,
-            context: { currentCard: testCard({ title: "设计确认" }), relatedCards: [], boardLabels: [] }
+            context: {
+                currentCard: testCard({ title: "设计确认" }),
+                boardLabels: []
+            }
         })).resolves.toEqual({});
 
         expect(fetch).not.toHaveBeenCalled();
@@ -724,7 +718,10 @@ describe("AI prompt contracts", () => {
             textBeforeCursor: "进展 ",
             textAfterCursor: "",
             maxChars: 20,
-            context: { currentCard: testCard({ comments: [{ id: "comment-1", body: "昨天已经同步初稿", createdAt: 1, updatedAt: 1 }] }), relatedCards: [], boardLabels: [] }
+            context: {
+                currentCard: testCard({ comments: [{ id: "comment-1", body: "昨天已经同步初稿", createdAt: 1, updatedAt: 1 }] }),
+                boardLabels: []
+            }
         })).resolves.toEqual({ suggestion: "今天补齐结论。" });
     });
 
@@ -764,7 +761,6 @@ describe("AI prompt contracts", () => {
                     title: "趋势交易的agent",
                     descriptionText: "先整理出流程文章，然后再思考怎么弄成agent定时执行\n\n## 优化趋势交易信号\n\n1. 1w、2w同向方向一致才是方向一致\n2.关注小级别趋势\n3. 构建"
                 }),
-                relatedCards: [],
                 boardLabels: []
             }
         })).resolves.toEqual({ suggestion: "交易信号回测流程" });
@@ -794,7 +790,6 @@ describe("AI completion quality benchmarks", () => {
                                 { id: "subtask-2", title: "同步测试结果", completed: false, createdAt: 1, updatedAt: 1 }
                             ]
                         }),
-                        relatedCards: [],
                         boardLabels: []
                     }
                 },
@@ -813,7 +808,10 @@ describe("AI completion quality benchmarks", () => {
                     textBeforeCursor: "进展 ",
                     textAfterCursor: "",
                     maxChars: 20,
-                    context: { currentCard: testCard({ comments: [{ id: "comment-1", body: "昨天已经同步初稿", createdAt: 1, updatedAt: 1 }] }), relatedCards: [], boardLabels: [] }
+                    context: {
+                        currentCard: testCard({ comments: [{ id: "comment-1", body: "昨天已经同步初稿", createdAt: 1, updatedAt: 1 }] }),
+                        boardLabels: []
+                    }
                 },
                 modelContent: '{"insert":"今天补齐结论。"}',
                 expected: { suggestion: "今天补齐结论。" },

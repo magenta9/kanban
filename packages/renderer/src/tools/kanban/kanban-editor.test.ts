@@ -4,7 +4,6 @@ import {
     applyRichTextListContinuation,
     findRichTextMarkdownLinkSuffix,
     formatDateRange,
-    draftCardsForAiContext,
     isMarkdownSubmitShortcut,
     isRichTextListActive,
     isRichTextListIndentShortcut,
@@ -12,7 +11,6 @@ import {
     isRichTextSubmitShortcut,
     normalizeDateRange,
     parseRichTextMarkdownLink,
-    relatedCardsForAiContext,
     resolveMarkdownTextareaListShortcut,
     recurrenceSummary,
     resolveRichTextLinkPaste,
@@ -193,28 +191,7 @@ describe("resolveMarkdownTextareaListShortcut", () => {
     });
 });
 
-describe("AI context helpers", () => {
-    it("uses shared-label recent active cards for existing card context", () => {
-        const current = testCard({ id: "current", labelIds: ["bug"] });
-        const matchingNewer = testCard({ id: "matching-newer", labelIds: ["bug"], updatedAt: 4 });
-        const matchingOlder = testCard({ id: "matching-older", labelIds: ["bug"], updatedAt: 2 });
-        const unrelated = testCard({ id: "unrelated", labelIds: ["feature"], updatedAt: 5 });
-        const archived = testCard({ id: "archived", labelIds: ["bug"], updatedAt: 6, archivedAt: 7 });
-
-        expect(relatedCardsForAiContext(current, [current, matchingOlder, unrelated, matchingNewer, archived]).map((card) => card.id)).toEqual([
-            "matching-newer",
-            "matching-older"
-        ]);
-    });
-
-    it("uses current-column recent active cards for draft context", () => {
-        const newest = testCard({ id: "newest", columnId: "todo", updatedAt: 4 });
-        const older = testCard({ id: "older", columnId: "todo", updatedAt: 2 });
-        const otherColumn = testCard({ id: "other", columnId: "doing", updatedAt: 5 });
-
-        expect(draftCardsForAiContext("todo", [older, otherColumn, newest]).map((card) => card.id)).toEqual(["newest", "older"]);
-    });
-
+describe("stable label colors", () => {
     it("returns stable label colors for same board and normalized name", () => {
         expect(stableLabelColor("board", " Product  Ops ")).toBe(stableLabelColor("board", "product ops"));
     });

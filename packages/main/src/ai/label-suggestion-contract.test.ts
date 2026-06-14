@@ -25,7 +25,6 @@ function labelInput(input: Partial<AiLabelSuggestionInput> = {}): AiLabelSuggest
         draft: "pro",
         context: {
             currentCard: testCard(),
-            relatedCards: [],
             columnName: "Todo",
             boardLabels: [
                 { id: "label-1", boardId: "board-1", name: "Product Ops", color: "#111827" },

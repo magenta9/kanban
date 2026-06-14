@@ -245,7 +245,6 @@ export interface AiTextSuggestionDecision {
 
 export interface AiSuggestionCardContext {
     currentCard?: KanbanCard;
-    relatedCards: KanbanCard[];
     boardLabels: KanbanLabel[];
     columnName?: string;
 }
