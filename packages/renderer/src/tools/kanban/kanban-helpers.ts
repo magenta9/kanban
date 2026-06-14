@@ -14,18 +14,6 @@ const labelColors = ["#756858", "#6f7a43", "#b36a3c", "#8f6f4f", "#9a5f54"] as c
 const richTextLinkPlaceholder = "link";
 const richTextBareHttpUrlPattern = /^https?:\/\/\S+$/i;
 
-export function relatedCardsForAiContext(card: KanbanCard, cards: KanbanCard[]): KanbanCard[] {
-    const activeCards = cards.filter((item) => !item.archivedAt && item.id !== card.id);
-    const related = card.labelIds.length > 0
-        ? activeCards.filter((item) => item.labelIds.some((labelId) => card.labelIds.includes(labelId)))
-        : activeCards;
-    return related.sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 20);
-}
-
-export function draftCardsForAiContext(columnId: string, cards: KanbanCard[]): KanbanCard[] {
-    return cards.filter((card) => !card.archivedAt && card.columnId === columnId).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 20);
-}
-
 export function shouldRequestInlineCompletion(textBeforeCursor: string, textAfterCursor: string, minChars: number, focused: boolean): boolean {
     const currentLineBeforeCursor = textBeforeCursor.slice(textBeforeCursor.lastIndexOf("\n") + 1);
     return focused && currentLineBeforeCursor.trim().length >= minChars;

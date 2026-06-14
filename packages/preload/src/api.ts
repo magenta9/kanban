@@ -1,9 +1,16 @@
 import { ipcRenderer } from "electron";
-import { ipcChannels, type PreloadApi } from "@kanban/shared";
+import { ipcChannels, ipcInvokeChannel, type IpcInvokeHandlerName, type PreloadApi } from "@kanban/shared";
+
+function invoke<TResult>(handlerName: IpcInvokeHandlerName, input?: unknown): Promise<TResult> {
+  const channel = ipcInvokeChannel(handlerName);
+  return input === undefined
+    ? ipcRenderer.invoke(channel)
+    : ipcRenderer.invoke(channel, input);
+}
 
 export const api: PreloadApi = {
   system: {
-    getStatus: () => ipcRenderer.invoke(ipcChannels.system.getStatus),
+    getStatus: () => invoke("system.getStatus"),
     onShowKeyboardShortcuts: (callback) => {
       const listener = () => callback();
       ipcRenderer.on(ipcChannels.system.showKeyboardShortcuts, listener);
@@ -16,48 +23,48 @@ export const api: PreloadApi = {
     }
   },
   ai: {
-    getSettings: () => ipcRenderer.invoke(ipcChannels.ai.getSettings),
-    saveSettings: (input) => ipcRenderer.invoke(ipcChannels.ai.saveSettings, input),
-    testConnection: () => ipcRenderer.invoke(ipcChannels.ai.testConnection),
-    openLogFile: () => ipcRenderer.invoke(ipcChannels.ai.openLogFile),
-    suggestText: (input) => ipcRenderer.invoke(ipcChannels.ai.suggestText, input),
-    suggestLabels: (input) => ipcRenderer.invoke(ipcChannels.ai.suggestLabels, input)
+    getSettings: () => invoke("ai.getSettings"),
+    saveSettings: (input) => invoke("ai.saveSettings", input),
+    testConnection: () => invoke("ai.testConnection"),
+    openLogFile: () => invoke("ai.openLogFile"),
+    suggestText: (input) => invoke("ai.suggestText", input),
+    suggestLabels: (input) => invoke("ai.suggestLabels", input)
   },
   agent: {
-    listAvailable: () => ipcRenderer.invoke(ipcChannels.agent.listAvailable),
-    selectRepoPath: () => ipcRenderer.invoke(ipcChannels.agent.selectRepoPath),
-    validateRepoPath: (input) => ipcRenderer.invoke(ipcChannels.agent.validateRepoPath, input),
-    startRun: (input) => ipcRenderer.invoke(ipcChannels.agent.startRun, input)
+    listAvailable: () => invoke("agent.listAvailable"),
+    selectRepoPath: () => invoke("agent.selectRepoPath"),
+    validateRepoPath: (input) => invoke("agent.validateRepoPath", input),
+    startRun: (input) => invoke("agent.startRun", input)
   },
   kanban: {
-    listBoards: () => ipcRenderer.invoke(ipcChannels.kanban.listBoards),
-    createBoard: (input) => ipcRenderer.invoke(ipcChannels.kanban.createBoard, input),
-    renameBoard: (input) => ipcRenderer.invoke(ipcChannels.kanban.renameBoard, input),
-    deleteBoard: (input) => ipcRenderer.invoke(ipcChannels.kanban.deleteBoard, input),
-    listColumns: (input) => ipcRenderer.invoke(ipcChannels.kanban.listColumns, input),
-    createColumn: (input) => ipcRenderer.invoke(ipcChannels.kanban.createColumn, input),
-    updateColumn: (input) => ipcRenderer.invoke(ipcChannels.kanban.updateColumn, input),
-    setCompletionColumn: (input) => ipcRenderer.invoke(ipcChannels.kanban.setCompletionColumn, input),
-    reorderColumn: (input) => ipcRenderer.invoke(ipcChannels.kanban.reorderColumn, input),
-    archiveColumn: (input) => ipcRenderer.invoke(ipcChannels.kanban.archiveColumn, input),
-    restoreColumn: (input) => ipcRenderer.invoke(ipcChannels.kanban.restoreColumn, input),
-    listCards: (input) => ipcRenderer.invoke(ipcChannels.kanban.listCards, input),
-    createCard: (input) => ipcRenderer.invoke(ipcChannels.kanban.createCard, input),
-    updateCard: (input) => ipcRenderer.invoke(ipcChannels.kanban.updateCard, input),
-    deleteCard: (input) => ipcRenderer.invoke(ipcChannels.kanban.deleteCard, input),
-    archiveCard: (input) => ipcRenderer.invoke(ipcChannels.kanban.archiveCard, input),
-    restoreCard: (input) => ipcRenderer.invoke(ipcChannels.kanban.restoreCard, input),
-    reorderCard: (input) => ipcRenderer.invoke(ipcChannels.kanban.reorderCard, input),
-    listLabels: (input) => ipcRenderer.invoke(ipcChannels.kanban.listLabels, input),
-    createLabel: (input) => ipcRenderer.invoke(ipcChannels.kanban.createLabel, input),
-    deleteLabel: (input) => ipcRenderer.invoke(ipcChannels.kanban.deleteLabel, input),
-    setCardLabels: (input) => ipcRenderer.invoke(ipcChannels.kanban.setCardLabels, input),
-    enableCardRecurrence: (input) => ipcRenderer.invoke(ipcChannels.kanban.enableCardRecurrence, input),
-    updateCardRecurrence: (input) => ipcRenderer.invoke(ipcChannels.kanban.updateCardRecurrence, input),
-    disableCardRecurrence: (input) => ipcRenderer.invoke(ipcChannels.kanban.disableCardRecurrence, input),
-    generateDueRecurrences: (input) => ipcRenderer.invoke(ipcChannels.kanban.generateDueRecurrences, input),
-    exportBoard: (input) => ipcRenderer.invoke(ipcChannels.kanban.exportBoard, input),
-    importBoard: (input) => ipcRenderer.invoke(ipcChannels.kanban.importBoard, input),
+    listBoards: () => invoke("kanban.listBoards"),
+    createBoard: (input) => invoke("kanban.createBoard", input),
+    renameBoard: (input) => invoke("kanban.renameBoard", input),
+    deleteBoard: (input) => invoke("kanban.deleteBoard", input),
+    listColumns: (input) => invoke("kanban.listColumns", input),
+    createColumn: (input) => invoke("kanban.createColumn", input),
+    updateColumn: (input) => invoke("kanban.updateColumn", input),
+    setCompletionColumn: (input) => invoke("kanban.setCompletionColumn", input),
+    reorderColumn: (input) => invoke("kanban.reorderColumn", input),
+    archiveColumn: (input) => invoke("kanban.archiveColumn", input),
+    restoreColumn: (input) => invoke("kanban.restoreColumn", input),
+    listCards: (input) => invoke("kanban.listCards", input),
+    createCard: (input) => invoke("kanban.createCard", input),
+    updateCard: (input) => invoke("kanban.updateCard", input),
+    deleteCard: (input) => invoke("kanban.deleteCard", input),
+    archiveCard: (input) => invoke("kanban.archiveCard", input),
+    restoreCard: (input) => invoke("kanban.restoreCard", input),
+    reorderCard: (input) => invoke("kanban.reorderCard", input),
+    listLabels: (input) => invoke("kanban.listLabels", input),
+    createLabel: (input) => invoke("kanban.createLabel", input),
+    deleteLabel: (input) => invoke("kanban.deleteLabel", input),
+    setCardLabels: (input) => invoke("kanban.setCardLabels", input),
+    enableCardRecurrence: (input) => invoke("kanban.enableCardRecurrence", input),
+    updateCardRecurrence: (input) => invoke("kanban.updateCardRecurrence", input),
+    disableCardRecurrence: (input) => invoke("kanban.disableCardRecurrence", input),
+    generateDueRecurrences: (input) => invoke("kanban.generateDueRecurrences", input),
+    exportBoard: (input) => invoke("kanban.exportBoard", input),
+    importBoard: (input) => invoke("kanban.importBoard", input),
     onCardCommentsChanged: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof callback>[0]) => callback(payload);
       ipcRenderer.on(ipcChannels.kanban.cardCommentsChanged, listener);

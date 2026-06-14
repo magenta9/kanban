@@ -1,21 +1,16 @@
 import type { IpcMain } from "electron";
-import { ipcChannels } from "@kanban/shared";
+import { allIpcInvokeChannels, ipcInvokeChannel, type IpcInvokeHandlerName } from "@kanban/shared";
 
 export type IpcHandler<TResult = unknown> = (input: any) => Promise<TResult> | TResult;
 
-export function bindInvoke<TResult>(
+export function bindContractInvoke<TResult>(
   ipcMain: IpcMain,
-  channel: string,
+  handlerName: IpcInvokeHandlerName,
   handler: IpcHandler<TResult>
 ): void {
-  ipcMain.handle(channel, async (_event, input: unknown) => handler(input));
+  ipcMain.handle(ipcInvokeChannel(handlerName), async (_event, input: unknown) => handler(input));
 }
 
 export function allDeclaredInvokeChannels(): string[] {
-  const { cardCommentsChanged: _cardCommentsChanged, ...kanbanInvokeChannels } = ipcChannels.kanban;
-  return [
-    ipcChannels.system.getStatus,
-    ...Object.values(ipcChannels.ai),
-    ...Object.values(kanbanInvokeChannels)
-  ];
+  return allIpcInvokeChannels();
 }
