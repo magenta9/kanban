@@ -212,7 +212,6 @@ export class AgentRunService {
 }
 
 export function buildPaseoPrompt(card: KanbanCard): string {
-    const description = requirementDescription(card);
     const subtasks = card.subtasks.length > 0
         ? card.subtasks.map((subtask) => `- [${subtask.completed ? "x" : " "}] ${subtask.title.trim()}`).join("\n")
         : "No subtasks.";
@@ -229,31 +228,12 @@ export function buildPaseoPrompt(card: KanbanCard): string {
         "Requirement title:",
         card.title.trim(),
         "",
-        "Requirement description:",
-        description,
-        "",
         "Subtasks:",
         subtasks,
         "",
         "Comments:",
-        comments,
-        "",
-        "Complete the requested work. When finished, summarize what changed, checks run, and any follow-up needed."
+        comments
     ].join("\n");
-}
-
-function requirementDescription(card: KanbanCard): string {
-    const descriptionText = card.descriptionText?.trim();
-    if (descriptionText) {
-        return descriptionText;
-    }
-
-    const descriptionMarkdown = card.descriptionMarkdown?.trim();
-    if (descriptionMarkdown) {
-        return descriptionMarkdown;
-    }
-
-    return "No description.";
 }
 
 function isAgentRunComment(comment: KanbanComment): boolean {

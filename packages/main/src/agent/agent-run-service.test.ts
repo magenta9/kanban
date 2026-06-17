@@ -11,7 +11,6 @@ function testCard(patch: Partial<KanbanCard> = {}): KanbanCard {
         boardId: "board-1",
         columnId: "todo",
         title: "Fix checkout flow",
-        descriptionText: "Checkout should preserve the selected shipping method.",
         gitRepositoryPath: "/repo",
         priority: "none",
         sortOrder: 1,
@@ -30,6 +29,11 @@ function testSubtask(title: string, completed = false): KanbanSubtask {
 
 function testComment(body: string): KanbanComment {
     return { id: body, body, createdAt: 1_765_000_000_000, updatedAt: 1_765_000_000_000 };
+}
+
+function expectPromptToExcludeDescription(prompt: string): void {
+    expect(prompt).not.toContain("Requirement description:");
+    expect(prompt).not.toContain("Checkout should preserve the selected shipping method.");
 }
 
 function createRepository(card: KanbanCard): KanbanRepository {
@@ -159,6 +163,7 @@ describe("AgentRunService", () => {
 
     it("starts a detached Paseo run and appends a start comment", async () => {
         const card = testCard({
+            descriptionText: "Checkout should preserve the selected shipping method.",
             subtasks: [testSubtask("Add tests", true), testSubtask("Wire UI")],
             comments: [
                 testComment("Use the new provider picker."),
@@ -190,10 +195,11 @@ describe("AgentRunService", () => {
         const prompt = vi.mocked(paseo.startDetachedRun).mock.calls[0]?.[0].prompt ?? "";
         expect(prompt).toEqual(expect.stringMatching(/^\/goal\n/));
         expect(prompt).toContain("Requirement title:\nFix checkout flow");
-        expect(prompt).toContain("Requirement description:\nCheckout should preserve the selected shipping method.");
+        expectPromptToExcludeDescription(prompt);
         expect(prompt).toContain("- [x] Add tests");
         expect(prompt).toContain("- [ ] Wire UI");
         expect(prompt).toContain("Use the new provider picker.");
+        expect(prompt).not.toContain("Complete the requested work.");
         expect(prompt).not.toContain("Provider: Codex (codex)");
         expect(repository.addCardComment).toHaveBeenNthCalledWith(1, {
             cardId: card.id,
@@ -424,23 +430,16 @@ describe("AgentRunService", () => {
 describe("buildPaseoPrompt", () => {
     it("contains only the current requirement context", () => {
         const prompt = buildPaseoPrompt(testCard({
+            descriptionText: "Checkout should preserve the selected shipping method.",
             subtasks: [testSubtask("Ship it")],
             comments: [testComment("Human context."), testComment("Agent run failed.\n\nOld output.")]
         }));
 
         expect(prompt).toContain("Agent Run Requirement Context");
         expect(prompt).toContain("Requirement title:\nFix checkout flow");
-        expect(prompt).toContain("Requirement description:\nCheckout should preserve the selected shipping method.");
+        expectPromptToExcludeDescription(prompt);
         expect(prompt).toContain("Human context.");
+        expect(prompt).not.toContain("Complete the requested work.");
         expect(prompt).not.toContain("Old output.");
-    });
-
-    it("falls back to markdown description when plain text is unavailable", () => {
-        const prompt = buildPaseoPrompt(testCard({
-            descriptionText: "",
-            descriptionMarkdown: "Use **markdown** details."
-        }));
-
-        expect(prompt).toContain("Requirement description:\nUse **markdown** details.");
     });
 });
