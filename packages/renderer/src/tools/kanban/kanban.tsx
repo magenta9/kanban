@@ -17,7 +17,7 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import type { Editor, JSONContent } from "@tiptap/react";
 import ReactMarkdown from "react-markdown";
-import type { AiLabelSuggestion, AiSettingsState, AiSuggestionCardContext, AiTestConnectionResult, AiTextSuggestionField, KanbanAgentInfo, KanbanBoard, KanbanCard, KanbanCardPatch, KanbanColumn, KanbanComment, KanbanLabel, KanbanPriority, KanbanRecurrenceCycle, KanbanRecurrenceTrigger, KanbanRichTextDocument, KanbanSubtask } from "@kanban/shared";
+import type { AiLabelSuggestion, AiSettingsState, AiSuggestionCardContext, AiTestConnectionResult, AiTextSuggestionField, KanbanBoard, KanbanCard, KanbanCardPatch, KanbanColumn, KanbanComment, KanbanLabel, KanbanPriority, KanbanRecurrenceCycle, KanbanRecurrenceTrigger, KanbanRichTextDocument, KanbanSubtask } from "@kanban/shared";
 import {
     Archive,
     AlertTriangle,
@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { getApi } from "../../api";
 import { IconButton, SegmentedControl } from "../../components/tool-layout";
+import { useAgentRunWorkflowState } from "./agent-run-workflow-state";
 import { useBoardWorkspaceState } from "./board-workspace-state";
 import { useCardEditingState } from "./card-edit-state";
 import { useDraftCardState, type DraftCard, type DraftCardComposer } from "./draft-card-state";
@@ -1312,7 +1313,6 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
     onToggleLabel: (card: KanbanCard, labelId: string) => Promise<void>;
     onAgentRunComplete: () => Promise<void>;
 }): JSX.Element {
-    const api = useMemo(() => getApi(), []);
     const {
         title,
         columnId,
@@ -1340,12 +1340,6 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
     const [commentDraft, setCommentDraft] = useState("");
     const [tagDraft, setTagDraft] = useState("");
     const [tagEditorOpen, setTagEditorOpen] = useState(false);
-    const [repositoryPathDraft, setRepositoryPathDraft] = useState(card.gitRepositoryPath ?? "");
-    const [repoValidation, setRepoValidation] = useState<{ ok: boolean; message: string; repoRoot?: string } | null>(null);
-    const [availableAgents, setAvailableAgents] = useState<KanbanAgentInfo[]>([]);
-    const [selectedAgentId, setSelectedAgentId] = useState("");
-    const [agentRunMessage, setAgentRunMessage] = useState("");
-    const [agentRunBusy, setAgentRunBusy] = useState(false);
     const selectedColumn = columns.find((column) => column.id === columnId);
     const labelSuggestions = useMemo(() => tagEditorOpen ? suggestBoardLabelsByPrefix(labels, card.labelIds, tagDraft, 5) : [], [tagEditorOpen, labels, card.labelIds, tagDraft]);
     const aiContext = useMemo(() => cardAiContext({
@@ -1371,27 +1365,7 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
         setCommentDraft("");
         setTagDraft("");
         setTagEditorOpen(false);
-        setRepositoryPathDraft(card.gitRepositoryPath ?? "");
-        setRepoValidation(null);
-        setAgentRunMessage("");
     }, [card.id, card.gitRepositoryPath]);
-
-    useEffect(() => {
-        let cancelled = false;
-        void api.agent.listAvailable().then((agents) => {
-            if (cancelled) return;
-            setAvailableAgents(agents);
-            setSelectedAgentId((current) => current && agents.some((agent) => agent.id === current) ? current : agents[0]?.id ?? "");
-        }).catch((caught) => {
-            if (cancelled) return;
-            setAvailableAgents([]);
-            setSelectedAgentId("");
-            setAgentRunMessage(errorMessage(caught));
-        });
-        return () => {
-            cancelled = true;
-        };
-    }, [api]);
 
     function addSubtask(): void {
         if (addEditedSubtask(subtaskDraft)) setSubtaskDraft("");
@@ -1423,58 +1397,6 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
             return;
         }
         void onCreateLabel(card, suggestion.name);
-    }
-
-    async function validateBoundRepositoryPath(path = repositoryPathDraft.trim(), save = false): Promise<boolean> {
-        if (!path) {
-            setRepoValidation(null);
-            if (save && card.gitRepositoryPath) {
-                await onSave(card.id, { gitRepositoryPath: null });
-            }
-            return false;
-        }
-        try {
-            const result = await api.agent.validateRepoPath({ path });
-            const message = result.ok ? `Repository ready: ${result.repoRoot ?? result.path}` : result.message ?? "This folder is not a Git repository.";
-            setRepoValidation({ ok: result.ok, message, repoRoot: result.repoRoot });
-            if (result.ok && save) {
-                const nextPath = result.repoRoot ?? result.path;
-                setRepositoryPathDraft(nextPath);
-                await onSave(card.id, { gitRepositoryPath: nextPath });
-            }
-            return result.ok;
-        } catch (caught) {
-            setRepoValidation({ ok: false, message: errorMessage(caught) });
-            return false;
-        }
-    }
-
-    async function startAgentRun(): Promise<void> {
-        if (!selectedAgentId || agentRunBusy) return;
-        setAgentRunBusy(true);
-        setAgentRunMessage("Starting Paseo agent...");
-        try {
-            const valid = await validateBoundRepositoryPath(repositoryPathDraft.trim(), true);
-            if (!valid) return;
-            const result = await api.agent.startRun({
-                cardId: card.id,
-                agentId: selectedAgentId
-            });
-            setAgentRunMessage(`Started ${result.agent.name}. Start comment added with Paseo run details.`);
-            await onAgentRunComplete();
-        } catch (caught) {
-            setAgentRunMessage(errorMessage(caught));
-        } finally {
-            setAgentRunBusy(false);
-        }
-    }
-
-    async function chooseAgentRepoPath(): Promise<void> {
-        const path = await api.agent.selectRepoPath();
-        if (!path) return;
-        setRepositoryPathDraft(path);
-        setAgentRunMessage("");
-        void validateBoundRepositoryPath(path, true);
     }
 
     return (
@@ -1576,56 +1498,7 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
                         )}
                     </div>
                 </section>
-                <section className="kanban-detail-section">
-                    <h4>Bindings</h4>
-                    <div className="kanban-agent-panel">
-                        <div className="kanban-agent-path-row">
-                            <label className="kanban-agent-field">
-                                <span>Git repository</span>
-                                <input
-                                    value={repositoryPathDraft}
-                                    onChange={(event) => {
-                                        setRepositoryPathDraft(event.target.value);
-                                        setRepoValidation(null);
-                                    }}
-                                    onBlur={() => { void validateBoundRepositoryPath(repositoryPathDraft.trim(), true); }}
-                                    placeholder="/path/to/git/repo"
-                                    disabled={agentRunBusy}
-                                />
-                            </label>
-                            <button type="button" className="kanban-agent-secondary-button" onClick={() => void chooseAgentRepoPath()} disabled={agentRunBusy}>
-                                <FolderOpen size={14} /> Choose
-                            </button>
-                        </div>
-                        {repoValidation ? <p className={repoValidation.ok ? "kanban-agent-status is-ok" : "kanban-agent-status is-error"}>{repoValidation.ok ? <Check size={13} /> : <AlertTriangle size={13} />}{repoValidation.message}</p> : null}
-                    </div>
-                </section>
-                <section className="kanban-detail-section">
-                    <h4>Agent</h4>
-                    <div className="kanban-agent-panel">
-                        <div className="kanban-agent-action-row">
-                            {availableAgents.length > 0 ? (
-                                <div className="kanban-agent-select">
-                                    <CustomSelect
-                                        label="Agent"
-                                        value={selectedAgentId}
-                                        options={availableAgents.map((agent) => ({ value: agent.id, label: agent.name }))}
-                                        icon={<Bot size={14} />}
-                                        showLabel={false}
-                                        onChange={setSelectedAgentId}
-                                    />
-                                </div>
-                            ) : (
-                                <div className="kanban-agent-empty-select"><Bot size={14} /><span>No Paseo provider</span></div>
-                            )}
-                            <button className="kanban-agent-run-button" type="button" onClick={() => void startAgentRun()} disabled={agentRunBusy || !repositoryPathDraft.trim() || !selectedAgentId || availableAgents.length === 0}>
-                                <Play size={13} /> {agentRunBusy ? "Starting..." : "Run"}
-                            </button>
-                        </div>
-                        {availableAgents.length === 0 ? <p className="kanban-agent-note">Enable an available Paseo provider to run an agent from a card.</p> : null}
-                        {agentRunMessage ? <p className="kanban-agent-status"><Bot size={13} />{agentRunMessage}</p> : null}
-                    </div>
-                </section>
+                <AgentRunWorkflowSections card={card} onSave={onSave} onAgentRunComplete={onAgentRunComplete} />
                 <section className="kanban-detail-section">
                     <h4>Comments</h4>
                     <div className="kanban-comments">
@@ -1655,6 +1528,81 @@ function CardDetails({ card, cards, columns, labels, onClose, onSave, onSaveRecu
                 </section>
             </div>
         </aside>
+    );
+}
+
+function AgentRunWorkflowSections({ card, onSave, onAgentRunComplete }: {
+    card: KanbanCard;
+    onSave: (cardId: string, patch: Partial<KanbanCardPatch>) => Promise<void>;
+    onAgentRunComplete: () => Promise<void>;
+}): JSX.Element {
+    const api = useMemo(() => getApi(), []);
+    const {
+        repositoryPathDraft,
+        repoValidation,
+        availableAgents,
+        selectedAgentId,
+        agentRunMessage,
+        agentRunBusy,
+        updateRepositoryPathDraft,
+        setSelectedAgentId,
+        validateBoundRepositoryPath,
+        chooseAgentRepoPath,
+        startAgentRun
+    } = useAgentRunWorkflowState({ api, card, onSave, onAgentRunComplete });
+    const hasAvailableAgents = availableAgents.length > 0;
+    const runDisabled = agentRunBusy || !repositoryPathDraft.trim() || !selectedAgentId || !hasAvailableAgents;
+
+    return (
+        <>
+            <section className="kanban-detail-section">
+                <h4>Bindings</h4>
+                <div className="kanban-agent-panel">
+                    <div className="kanban-agent-path-row">
+                        <label className="kanban-agent-field">
+                            <span>Git repository</span>
+                            <input
+                                value={repositoryPathDraft}
+                                onChange={(event) => updateRepositoryPathDraft(event.target.value)}
+                                onBlur={() => { void validateBoundRepositoryPath(repositoryPathDraft.trim(), true); }}
+                                placeholder="/path/to/git/repo"
+                                disabled={agentRunBusy}
+                            />
+                        </label>
+                        <button type="button" className="kanban-agent-secondary-button" onClick={() => void chooseAgentRepoPath()} disabled={agentRunBusy}>
+                            <FolderOpen size={14} /> Choose
+                        </button>
+                    </div>
+                    {repoValidation ? <p className={repoValidation.ok ? "kanban-agent-status is-ok" : "kanban-agent-status is-error"}>{repoValidation.ok ? <Check size={13} /> : <AlertTriangle size={13} />}{repoValidation.message}</p> : null}
+                </div>
+            </section>
+            <section className="kanban-detail-section">
+                <h4>Agent</h4>
+                <div className="kanban-agent-panel">
+                    <div className="kanban-agent-action-row">
+                        {hasAvailableAgents ? (
+                            <div className="kanban-agent-select">
+                                <CustomSelect
+                                    label="Agent"
+                                    value={selectedAgentId}
+                                    options={availableAgents.map((agent) => ({ value: agent.id, label: agent.name }))}
+                                    icon={<Bot size={14} />}
+                                    showLabel={false}
+                                    onChange={setSelectedAgentId}
+                                />
+                            </div>
+                        ) : (
+                            <div className="kanban-agent-empty-select"><Bot size={14} /><span>No Paseo provider</span></div>
+                        )}
+                        <button className="kanban-agent-run-button" type="button" onClick={() => void startAgentRun()} disabled={runDisabled}>
+                            <Play size={13} /> {agentRunBusy ? "Starting..." : "Run"}
+                        </button>
+                    </div>
+                    {!hasAvailableAgents ? <p className="kanban-agent-note">Enable an available Paseo provider to run an agent from a card.</p> : null}
+                    {agentRunMessage ? <p className="kanban-agent-status"><Bot size={13} />{agentRunMessage}</p> : null}
+                </div>
+            </section>
+        </>
     );
 }
 
