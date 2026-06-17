@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { KanbanCard, KanbanComment, KanbanSubtask } from "@kanban/shared";
 import type { KanbanRepository } from "../db/repositories/kanban-repository";
 import type { AgentRunRecord, AgentRunRepository } from "./agent-run-repository";
-import { AgentRunService, buildPaseoPrompt, inspectSummary, parsePaseoProviders, parsePaseoRunId, paseoInspectOutcome } from "./agent-run-service";
+import { AgentRunService, buildPaseoPrompt } from "./agent-run-service";
+import type { PaseoAdapter } from "./paseo-adapter";
 
 function testCard(patch: Partial<KanbanCard> = {}): KanbanCard {
     return {
@@ -125,64 +126,35 @@ function runningRecord(patch: Partial<AgentRunRecord> = {}): AgentRunRecord {
     };
 }
 
-describe("parsePaseoProviders", () => {
-    it("keeps enabled available Paseo providers and maps labels", () => {
-        const providers = parsePaseoProviders(JSON.stringify([
-            { provider: "codex", label: "Codex", status: "available", enabled: "Enabled" },
-            { provider: "pi", label: "Pi", status: "available", enabled: true },
-            { provider: "omp", label: "Open Model Proxy", status: "unavailable", enabled: "Enabled" },
-            { provider: "claude", label: "Claude", status: "available", enabled: "Disabled" },
-            { provider: "opencode", status: "available", enabled: "Enabled" }
-        ]));
-
-        expect(providers).toEqual([
-            { id: "codex", name: "Codex" },
-            { id: "pi", name: "Pi" },
-            { id: "opencode", name: "opencode" }
-        ]);
-    });
-
-    it("throws when Paseo provider output is not valid JSON", () => {
-        expect(() => parsePaseoProviders("not json")).toThrow("Paseo returned malformed provider JSON.");
-    });
-
-    it("throws when Paseo provider output is not an array", () => {
-        expect(() => parsePaseoProviders("{}")).toThrow("Paseo provider output must be a JSON array.");
-    });
-});
+function createPaseoAdapter(patch: Partial<PaseoAdapter> = {}): PaseoAdapter {
+    return {
+        listProviders: vi.fn(async () => [{ id: "codex", name: "Codex" }]),
+        validateRepoPath: vi.fn(async ({ path }) => ({ ok: true, path, repoRoot: "/repo" })),
+        startDetachedRun: vi.fn(async () => ({ paseoAgentId: "agent-123" })),
+        waitForCompletion: vi.fn(async () => ({ outcome: "completed" as const, details: "Status: completed; All checks passed." })),
+        inspectRecovery: vi.fn(async () => ({ kind: "completed" as const, details: "Status: completed; Recovered." })),
+        ...patch
+    };
+}
 
 describe("AgentRunService", () => {
-    it("loads providers from paseo provider ls --json", async () => {
-        const commandRunner = vi.fn(async () => ({
-            stdout: JSON.stringify([{ provider: "codex", label: "Codex", status: "available", enabled: "Enabled" }]),
-            stderr: "",
-            exitCode: 0
-        }));
-        const service = new AgentRunService({} as KanbanRepository, createAgentRuns(), { commandRunner });
+    it("loads providers from the Paseo adapter", async () => {
+        const paseo = createPaseoAdapter();
+        const service = new AgentRunService({} as KanbanRepository, createAgentRuns(), { paseo });
 
         await expect(service.listAvailable()).resolves.toEqual([{ id: "codex", name: "Codex" }]);
-        expect(commandRunner).toHaveBeenCalledWith("paseo", ["provider", "ls", "--json"], process.cwd());
+        expect(paseo.listProviders).toHaveBeenCalled();
     });
 
-    it("surfaces Paseo provider listing failures", async () => {
-        const commandRunner = vi.fn(async () => ({
-            stdout: "",
-            stderr: "paseo is not installed",
-            exitCode: 127
-        }));
-        const service = new AgentRunService({} as KanbanRepository, createAgentRuns(), { commandRunner });
+    it("surfaces Paseo adapter provider listing failures", async () => {
+        const paseo = createPaseoAdapter({
+            listProviders: vi.fn(async () => {
+                throw new Error("paseo is not installed");
+            })
+        });
+        const service = new AgentRunService({} as KanbanRepository, createAgentRuns(), { paseo });
 
         await expect(service.listAvailable()).rejects.toThrow("paseo is not installed");
-    });
-
-    it("surfaces a user-actionable message when the Paseo CLI cannot start", async () => {
-        const commandRunner = vi.fn(async () => {
-            throw new Error("spawn paseo ENOENT");
-        });
-        const service = new AgentRunService({} as KanbanRepository, createAgentRuns(), { commandRunner });
-
-        await expect(service.listAvailable()).rejects.toThrow("Install Paseo");
-        await expect(service.listAvailable()).rejects.toThrow("paseo onboard");
     });
 
     it("starts a detached Paseo run and appends a start comment", async () => {
@@ -194,36 +166,12 @@ describe("AgentRunService", () => {
             ]
         });
         const repository = createRepository(card);
-        const commandRunner = vi.fn(async (command: string, args: string[]) => {
-            if (command === "git" && args.includes("--show-toplevel")) {
-                return { stdout: "/repo\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "git" && args.includes("--is-inside-work-tree")) {
-                return { stdout: "true\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "provider") {
-                return {
-                    stdout: JSON.stringify([{ provider: "codex", label: "Codex", status: "available", enabled: "Enabled" }]),
-                    stderr: "",
-                    exitCode: 0
-                };
-            }
-            if (command === "paseo" && args[0] === "run") {
-                return { stdout: JSON.stringify({ id: "agent-123" }), stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "wait") {
-                return { stdout: JSON.stringify({ status: "idle" }), stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "inspect") {
-                return { stdout: JSON.stringify({ status: "completed", summary: "All checks passed." }), stderr: "", exitCode: 0 };
-            }
-            throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
-        });
+        const paseo = createPaseoAdapter();
         const onCardCommentsChanged = vi.fn();
         const backgroundTasks: Promise<void>[] = [];
         const agentRuns = createAgentRuns();
         const service = new AgentRunService(repository, agentRuns, {
-            commandRunner,
+            paseo,
             onCardCommentsChanged,
             backgroundTaskRunner: (task) => {
                 backgroundTasks.push(task());
@@ -234,12 +182,13 @@ describe("AgentRunService", () => {
         await Promise.all(backgroundTasks);
 
         expect(result).toMatchObject({ paseoAgentId: "agent-123", status: "started", agent: { id: "codex", name: "Codex" } });
-        const runCall = commandRunner.mock.calls.find(([command, args]) => command === "paseo" && args[0] === "run");
-        expect(runCall).toBeDefined();
-        const runArgs = runCall?.[1] ?? [];
-        expect(runArgs).toEqual(expect.arrayContaining(["run", "--detach", "--json", "--provider", "codex", "--cwd", "/repo", "--mode", "full-access"]));
-        expect(runArgs[runArgs.length - 1]).toEqual(expect.stringMatching(/^\/goal\n/));
-        const prompt = String(runArgs[runArgs.length - 1]);
+        expect(paseo.startDetachedRun).toHaveBeenCalledWith(expect.objectContaining({
+            agent: { id: "codex", name: "Codex" },
+            repoRoot: "/repo",
+            title: "Fix checkout flow"
+        }));
+        const prompt = vi.mocked(paseo.startDetachedRun).mock.calls[0]?.[0].prompt ?? "";
+        expect(prompt).toEqual(expect.stringMatching(/^\/goal\n/));
         expect(prompt).toContain("Requirement title:\nFix checkout flow");
         expect(prompt).toContain("Requirement description:\nCheckout should preserve the selected shipping method.");
         expect(prompt).toContain("- [x] Add tests");
@@ -252,7 +201,7 @@ describe("AgentRunService", () => {
         });
         expect(repository.addCardComment).toHaveBeenNthCalledWith(1, {
             cardId: card.id,
-            body: expect.stringContaining("Mode: Full Access")
+            body: expect.not.stringContaining("Mode:")
         });
         expect(repository.addCardComment).toHaveBeenNthCalledWith(2, {
             cardId: card.id,
@@ -269,7 +218,6 @@ describe("AgentRunService", () => {
             paseoAgentId: "agent-123",
             providerId: "codex",
             providerName: "Codex",
-            modeLabel: "Full Access",
             repoRoot: "/repo"
         }));
         expect(agentRuns.markFinished).toHaveBeenCalledWith(expect.objectContaining({
@@ -282,104 +230,30 @@ describe("AgentRunService", () => {
         const card = testCard();
         const repository = createRepository(card);
         const agentRuns = createAgentRuns({ running: [runningRecord({ cardId: card.id })] });
-        const commandRunner = vi.fn(async (command: string, args: string[]) => {
-            if (command === "git" && args.includes("--show-toplevel")) {
-                return { stdout: "/repo\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "git" && args.includes("--is-inside-work-tree")) {
-                return { stdout: "true\n", stderr: "", exitCode: 0 };
-            }
-            throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
-        });
-        const service = new AgentRunService(repository, agentRuns, { commandRunner });
+        const paseo = createPaseoAdapter();
+        const service = new AgentRunService(repository, agentRuns, { paseo });
 
         await expect(service.startRun({ cardId: card.id, agentId: "codex" })).rejects.toThrow("already has a running Agent Run");
-        expect(commandRunner).not.toHaveBeenCalledWith("paseo", expect.any(Array), expect.any(String));
+        expect(paseo.startDetachedRun).not.toHaveBeenCalled();
     });
 
     it("requires the Card to bind a Git repository before starting an Agent Run", async () => {
         const card = testCard({ gitRepositoryPath: undefined });
         const repository = createRepository(card);
-        const service = new AgentRunService(repository, createAgentRuns(), { commandRunner: vi.fn() });
+        const service = new AgentRunService(repository, createAgentRuns(), { paseo: createPaseoAdapter() });
 
         await expect(service.startRun({ cardId: card.id, agentId: "codex" })).rejects.toThrow("Bind a Git repository to this card");
-    });
-
-    it("does not pass Codex full access mode to non-Codex providers", async () => {
-        const card = testCard();
-        const repository = createRepository(card);
-        const commandRunner = vi.fn(async (command: string, args: string[]) => {
-            if (command === "git" && args.includes("--show-toplevel")) {
-                return { stdout: "/repo\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "git" && args.includes("--is-inside-work-tree")) {
-                return { stdout: "true\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "provider") {
-                return {
-                    stdout: JSON.stringify([{ provider: "pi", label: "Pi", status: "available", enabled: "Enabled" }]),
-                    stderr: "",
-                    exitCode: 0
-                };
-            }
-            if (command === "paseo" && args[0] === "run") {
-                return { stdout: JSON.stringify({ id: "agent-456" }), stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "wait") {
-                return { stdout: JSON.stringify({ status: "idle" }), stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "inspect") {
-                return { stdout: JSON.stringify({ status: "completed" }), stderr: "", exitCode: 0 };
-            }
-            throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
-        });
-        const backgroundTasks: Promise<void>[] = [];
-        const service = new AgentRunService(repository, createAgentRuns(), {
-            commandRunner,
-            backgroundTaskRunner: (task) => {
-                backgroundTasks.push(task());
-            }
-        });
-
-        await service.startRun({ cardId: card.id, agentId: "pi" });
-        await Promise.all(backgroundTasks);
-
-        const runCall = commandRunner.mock.calls.find(([command, args]) => command === "paseo" && args[0] === "run");
-        expect(runCall?.[1]).not.toContain("--mode");
-        expect(repository.addCardComment).toHaveBeenNthCalledWith(1, {
-            cardId: card.id,
-            body: expect.not.stringContaining("Mode: Full Access")
-        });
     });
 
     it("appends a failed finish comment when Paseo wait fails", async () => {
         const card = testCard();
         const repository = createRepository(card);
-        const commandRunner = vi.fn(async (command: string, args: string[]) => {
-            if (command === "git" && args.includes("--show-toplevel")) {
-                return { stdout: "/repo\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "git" && args.includes("--is-inside-work-tree")) {
-                return { stdout: "true\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "provider") {
-                return {
-                    stdout: JSON.stringify([{ provider: "codex", label: "Codex", status: "available", enabled: "Enabled" }]),
-                    stderr: "",
-                    exitCode: 0
-                };
-            }
-            if (command === "paseo" && args[0] === "run") {
-                return { stdout: JSON.stringify({ id: "agent-123" }), stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "wait") {
-                return { stdout: "", stderr: "agent crashed", exitCode: 1 };
-            }
-            throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+        const paseo = createPaseoAdapter({
+            waitForCompletion: vi.fn(async () => ({ outcome: "failed" as const, details: "agent crashed" }))
         });
         const backgroundTasks: Promise<void>[] = [];
         const service = new AgentRunService(repository, createAgentRuns(), {
-            commandRunner,
+            paseo,
             backgroundTaskRunner: (task) => {
                 backgroundTasks.push(task());
             }
@@ -401,26 +275,12 @@ describe("AgentRunService", () => {
     it("does not append a start comment when Paseo run fails before creating an agent", async () => {
         const card = testCard();
         const repository = createRepository(card);
-        const commandRunner = vi.fn(async (command: string, args: string[]) => {
-            if (command === "git" && args.includes("--show-toplevel")) {
-                return { stdout: "/repo\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "git" && args.includes("--is-inside-work-tree")) {
-                return { stdout: "true\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "provider") {
-                return {
-                    stdout: JSON.stringify([{ provider: "codex", label: "Codex", status: "available", enabled: "Enabled" }]),
-                    stderr: "",
-                    exitCode: 0
-                };
-            }
-            if (command === "paseo" && args[0] === "run") {
-                return { stdout: "", stderr: "provider auth expired", exitCode: 1 };
-            }
-            throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+        const paseo = createPaseoAdapter({
+            startDetachedRun: vi.fn(async () => {
+                throw new Error("provider auth expired");
+            })
         });
-        const service = new AgentRunService(repository, createAgentRuns(), { commandRunner });
+        const service = new AgentRunService(repository, createAgentRuns(), { paseo });
 
         await expect(service.startRun({ cardId: card.id, agentId: "codex" })).rejects.toThrow("provider auth expired");
         expect(repository.addCardComment).not.toHaveBeenCalled();
@@ -433,59 +293,22 @@ describe("AgentRunService", () => {
         vi.mocked(agentRuns.transaction).mockImplementation(() => {
             throw new Error("database is locked");
         });
-        const commandRunner = vi.fn(async (command: string, args: string[]) => {
-            if (command === "git" && args.includes("--show-toplevel")) {
-                return { stdout: "/repo\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "git" && args.includes("--is-inside-work-tree")) {
-                return { stdout: "true\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "provider") {
-                return {
-                    stdout: JSON.stringify([{ provider: "codex", label: "Codex", status: "available", enabled: "Enabled" }]),
-                    stderr: "",
-                    exitCode: 0
-                };
-            }
-            if (command === "paseo" && args[0] === "run") {
-                return { stdout: JSON.stringify({ id: "agent-123" }), stderr: "", exitCode: 0 };
-            }
-            throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
-        });
-        const service = new AgentRunService(repository, agentRuns, { commandRunner });
+        const service = new AgentRunService(repository, agentRuns, { paseo: createPaseoAdapter() });
 
-        await expect(service.startRun({ cardId: card.id, agentId: "codex" })).rejects.toThrow("Paseo agent agent-123 was created, but Kanban could not record it");
-        await expect(service.startRun({ cardId: card.id, agentId: "codex" })).rejects.toThrow("paseo logs agent-123");
+        await expect(service.startRun({ cardId: card.id, agentId: "codex" })).rejects.toThrow(/Paseo agent agent-123 was created, but Kanban could not record it.*paseo logs agent-123/);
     });
 
     it("appends a failed finish comment when Paseo wait cannot start", async () => {
         const card = testCard();
         const repository = createRepository(card);
-        const commandRunner = vi.fn(async (command: string, args: string[]) => {
-            if (command === "git" && args.includes("--show-toplevel")) {
-                return { stdout: "/repo\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "git" && args.includes("--is-inside-work-tree")) {
-                return { stdout: "true\n", stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "provider") {
-                return {
-                    stdout: JSON.stringify([{ provider: "codex", label: "Codex", status: "available", enabled: "Enabled" }]),
-                    stderr: "",
-                    exitCode: 0
-                };
-            }
-            if (command === "paseo" && args[0] === "run") {
-                return { stdout: JSON.stringify({ id: "agent-123" }), stderr: "", exitCode: 0 };
-            }
-            if (command === "paseo" && args[0] === "wait") {
-                throw new Error("daemon unavailable");
-            }
-            throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+        const paseo = createPaseoAdapter({
+            waitForCompletion: vi.fn(async () => {
+                throw new Error("Paseo CLI is not available. Install Paseo, run \"paseo onboard\", then try again. daemon unavailable");
+            })
         });
         const backgroundTasks: Promise<void>[] = [];
         const service = new AgentRunService(repository, createAgentRuns(), {
-            commandRunner,
+            paseo,
             backgroundTaskRunner: (task) => {
                 backgroundTasks.push(task());
             }
@@ -508,14 +331,11 @@ describe("AgentRunService", () => {
         const card = testCard();
         const repository = createRepository(card);
         const agentRuns = createAgentRuns({ running: [runningRecord({ cardId: card.id })] });
-        const commandRunner = vi.fn(async (command: string, args: string[]) => {
-            if (command === "paseo" && args[0] === "inspect") {
-                return { stdout: JSON.stringify({ status: "completed", summary: "Recovered." }), stderr: "", exitCode: 0 };
-            }
-            throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+        const paseo = createPaseoAdapter({
+            inspectRecovery: vi.fn(async () => ({ kind: "completed" as const, details: "Status: completed; Recovered." }))
         });
         const onCardCommentsChanged = vi.fn();
-        const service = new AgentRunService(repository, agentRuns, { commandRunner, onCardCommentsChanged });
+        const service = new AgentRunService(repository, agentRuns, { paseo, onCardCommentsChanged });
 
         await service.recoverRunningRuns();
 
@@ -531,13 +351,10 @@ describe("AgentRunService", () => {
         const card = testCard();
         const repository = createRepository(card);
         const agentRuns = createAgentRuns({ running: [runningRecord({ cardId: card.id })] });
-        const commandRunner = vi.fn(async (command: string, args: string[]) => {
-            if (command === "paseo" && args[0] === "inspect") {
-                return { stdout: JSON.stringify({ status: "cancelled", summary: "Stopped by user." }), stderr: "", exitCode: 0 };
-            }
-            throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+        const paseo = createPaseoAdapter({
+            inspectRecovery: vi.fn(async () => ({ kind: "failed" as const, details: "Status: cancelled; Stopped by user." }))
         });
-        const service = new AgentRunService(repository, agentRuns, { commandRunner });
+        const service = new AgentRunService(repository, agentRuns, { paseo });
 
         await service.recoverRunningRuns();
 
@@ -552,13 +369,10 @@ describe("AgentRunService", () => {
         const card = testCard();
         const repository = createRepository(card);
         const agentRuns = createAgentRuns({ running: [runningRecord({ cardId: card.id })] });
-        const commandRunner = vi.fn(async (command: string, args: string[]) => {
-            if (command === "paseo" && args[0] === "inspect") {
-                return { stdout: "", stderr: "agent not found", exitCode: 1 };
-            }
-            throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+        const paseo = createPaseoAdapter({
+            inspectRecovery: vi.fn(async () => ({ kind: "missing" as const, details: "agent not found" }))
         });
-        const service = new AgentRunService(repository, agentRuns, { commandRunner });
+        const service = new AgentRunService(repository, agentRuns, { paseo });
 
         await service.recoverRunningRuns();
 
@@ -573,10 +387,12 @@ describe("AgentRunService", () => {
         const card = testCard();
         const repository = createRepository(card);
         const agentRuns = createAgentRuns({ running: [runningRecord({ cardId: card.id })] });
-        const commandRunner = vi.fn(async () => {
-            throw new Error("daemon unavailable");
+        const paseo = createPaseoAdapter({
+            inspectRecovery: vi.fn(async () => {
+                throw new Error("Paseo CLI is not available. Install Paseo, run \"paseo onboard\", then try again. daemon unavailable");
+            })
         });
-        const service = new AgentRunService(repository, agentRuns, { commandRunner });
+        const service = new AgentRunService(repository, agentRuns, { paseo });
 
         await service.recoverRunningRuns();
 
@@ -591,12 +407,12 @@ describe("AgentRunService", () => {
         const card = testCard();
         const repository = createRepository(card);
         const agentRuns = createAgentRuns({ running: [runningRecord({ cardId: card.id, repoRoot: "/path/that/does/not/exist" })] });
-        const commandRunner = vi.fn();
-        const service = new AgentRunService(repository, agentRuns, { commandRunner });
+        const paseo = createPaseoAdapter();
+        const service = new AgentRunService(repository, agentRuns, { paseo });
 
         await service.recoverRunningRuns();
 
-        expect(commandRunner).not.toHaveBeenCalled();
+        expect(paseo.inspectRecovery).not.toHaveBeenCalled();
         expect(repository.addCardComment).not.toHaveBeenCalled();
         expect(agentRuns.recordTransientFailure).toHaveBeenCalledWith(expect.objectContaining({
             id: "run-1",
@@ -626,38 +442,5 @@ describe("buildPaseoPrompt", () => {
         }));
 
         expect(prompt).toContain("Requirement description:\nUse **markdown** details.");
-    });
-});
-
-describe("parsePaseoRunId", () => {
-    it("accepts common Paseo run id shapes", () => {
-        expect(parsePaseoRunId(JSON.stringify({ id: "agent-1" }))).toBe("agent-1");
-        expect(parsePaseoRunId(JSON.stringify({ agentId: "agent-2" }))).toBe("agent-2");
-        expect(parsePaseoRunId(JSON.stringify({ agent: { id: "agent-3" } }))).toBe("agent-3");
-    });
-
-    it("throws when no run id is present", () => {
-        expect(() => parsePaseoRunId("{}")).toThrow("Paseo run output did not include an agent id.");
-    });
-});
-
-describe("inspectSummary", () => {
-    it("summarizes inspect JSON", () => {
-        expect(inspectSummary(JSON.stringify({ status: "completed", summary: "Done" }))).toBe("Status: completed; Done");
-    });
-});
-
-describe("paseoInspectOutcome", () => {
-    it("maps explicit Paseo terminal and running states", () => {
-        expect(paseoInspectOutcome(JSON.stringify({ status: "idle" }))).toMatchObject({ kind: "completed" });
-        expect(paseoInspectOutcome(JSON.stringify({ state: "cancelled" }))).toMatchObject({ kind: "failed" });
-        expect(paseoInspectOutcome(JSON.stringify({ phase: "running" }))).toMatchObject({ kind: "running" });
-    });
-
-    it("keeps unknown inspect states recoverable", () => {
-        expect(paseoInspectOutcome(JSON.stringify({ status: "mystery" }))).toEqual({
-            kind: "unknown",
-            details: "Paseo inspect returned an unknown status: mystery"
-        });
     });
 });
