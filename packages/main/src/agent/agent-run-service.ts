@@ -173,6 +173,10 @@ export class AgentRunService {
             this.finalizeAgentRun(record, { status: "finished", outcome: outcome.kind, details: outcome.details });
             return;
         }
+        if (outcome.kind === "running") {
+            this.backgroundTaskRunner(() => this.observeRunningRun(record));
+            return;
+        }
         if (outcome.kind === "unknown") {
             this.agentRuns.recordTransientFailure({ id: record.id, lastError: outcome.details });
         }

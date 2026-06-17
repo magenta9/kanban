@@ -3,7 +3,7 @@ import type { KanbanCard, KanbanComment, KanbanSubtask } from "@kanban/shared";
 import type { KanbanRepository } from "../db/repositories/kanban-repository";
 import type { AgentRunRecord, AgentRunRepository } from "./agent-run-repository";
 import { AgentRunService, buildPaseoPrompt } from "./agent-run-service";
-import type { PaseoAdapter } from "./paseo-adapter";
+import type { PaseoAdapter, PaseoCompletion } from "./paseo-adapter";
 
 function testCard(patch: Partial<KanbanCard> = {}): KanbanCard {
     return {
@@ -351,6 +351,41 @@ describe("AgentRunService", () => {
         });
         expect(agentRuns.markFinished).toHaveBeenCalledWith(expect.objectContaining({ id: "run-1", outcome: "completed" }));
         expect(onCardCommentsChanged).toHaveBeenCalledWith({ boardId: "board-1", cardId: card.id });
+    });
+
+    it("re-observes recovered records that are still running", async () => {
+        const card = testCard();
+        const repository = createRepository(card);
+        const agentRuns = createAgentRuns({ running: [runningRecord({ cardId: card.id })] });
+        let finishWait!: (completion: PaseoCompletion) => void;
+        const paseo = createPaseoAdapter({
+            inspectRecovery: vi.fn(async () => ({ kind: "running" as const, details: "Still running." })),
+            waitForCompletion: vi.fn(() => new Promise<PaseoCompletion>((resolve) => {
+                finishWait = resolve;
+            }))
+        });
+        const backgroundTasks: Promise<void>[] = [];
+        const service = new AgentRunService(repository, agentRuns, {
+            paseo,
+            backgroundTaskRunner: (task) => {
+                backgroundTasks.push(task());
+            }
+        });
+
+        await service.recoverRunningRuns();
+
+        expect(paseo.waitForCompletion).toHaveBeenCalledWith({ paseoAgentId: "agent-123", repoRoot: "/Users/zhang/code/ai/kanban" });
+        expect(repository.addCardComment).not.toHaveBeenCalled();
+        expect(agentRuns.markFinished).not.toHaveBeenCalled();
+
+        finishWait({ outcome: "completed", details: "Status: completed; Recovered after restart." });
+        await Promise.all(backgroundTasks);
+
+        expect(repository.addCardComment).toHaveBeenCalledWith({
+            cardId: card.id,
+            body: expect.stringContaining("Agent run completed.")
+        });
+        expect(agentRuns.markFinished).toHaveBeenCalledWith(expect.objectContaining({ id: "run-1", outcome: "completed" }));
     });
 
     it("recovers failed external outcomes as finished Agent Runs with failed comments", async () => {
