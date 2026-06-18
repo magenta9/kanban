@@ -62,6 +62,12 @@ interface EvalResult {
     };
 }
 
+interface ForbiddenRelatedCard {
+    title: string;
+    descriptionText?: string;
+    descriptionMarkdown?: string;
+}
+
 const baselinePrompts: Record<AiTextSuggestionField, string> = {
     description: [
         "You complete a Markdown kanban description at the cursor.",
@@ -151,16 +157,7 @@ function selectedFixtures(options: CliOptions): AiCompletionFixture[] {
 
 async function evaluateFixture(options: CliOptions, fixture: AiCompletionFixture, variant: EvalVariant): Promise<EvalResult> {
     const input = toSuggestionInput(fixture);
-    const promptInput = variant === "current" ? buildTextPromptInput(input) : baselinePromptInput(fixture);
-    const messages = variant === "current"
-        ? [
-            { role: "system", content: buildTextMessages(input)[0].content },
-            { role: "user", content: JSON.stringify(promptInput) }
-        ]
-        : [
-            { role: "system", content: baselinePrompts[fixture.field] },
-            { role: "user", content: JSON.stringify(promptInput) }
-        ];
+    const messages = variant === "current" ? buildTextMessages(input) : baselineMessages(fixture);
     const raw = await chat(options.baseUrl, options.model, messages, generationTokens(fixture.field), 0.2, `${fixture.id}:${variant}`, textSuggestionOutputSchema);
     const resolved = resolveTextSuggestion(raw, input);
     const rawContractOk = Boolean(normalizeTextSuggestion(raw, fixture.field) || raw.includes('"insert"'));
@@ -228,7 +225,6 @@ function baselinePromptInput(fixture: AiCompletionFixture): object {
             blockedInsertions: blockedDescriptionInsertions(fixture.textBeforeCursor),
             maxChars: fixture.maxChars,
             cardFacts,
-            relatedFacts: fixture.context.relatedCards.map((card) => ({ title: card.title, descriptionText: card.descriptionText ?? "" })).slice(0, 3),
             board: { columnName: fixture.context.columnName, labels: fixture.context.boardLabels.map((label) => label.name) }
         };
     }
@@ -241,8 +237,7 @@ function baselinePromptInput(fixture: AiCompletionFixture): object {
             localLine,
             maxChars: fixture.maxChars,
             cardFacts,
-            siblingSubtasks: currentCard?.subtasks.slice(0, 8).map((subtask) => subtask.title).filter(Boolean) ?? [],
-            relatedFacts: fixture.context.relatedCards.map((card) => ({ title: card.title, descriptionText: card.descriptionText ?? "" })).slice(0, 3)
+            siblingSubtasks: currentCard?.subtasks.slice(0, 8).map((subtask) => subtask.title).filter(Boolean) ?? []
         };
     }
 
@@ -279,6 +274,7 @@ async function reviewCompletion(
         cursor: { before: fixture.textBeforeCursor, after: fixture.textAfterCursor },
         maxChars: fixture.maxChars,
         blockedInsertions: fixture.blockedInsertions,
+        forbiddenContext: compactForbiddenContext(fixture),
         modelOutput: { raw, parsedInsert: insertion },
         diagnostics
     };
@@ -391,6 +387,15 @@ function stabilizeReview(review: EvalResult["review"], fixture: AiCompletionFixt
         };
     }
 
+    if (diagnostics.forbiddenContextHit) {
+        return {
+            ...review,
+            decision: "fail",
+            summary: `Output used forbidden context. ${review.summary}`,
+            scores: capScores(review.scores, { evidenceSupport: 1, contract: 3 })
+        };
+    }
+
     if (diagnostics.blockedHit || diagnostics.insertHasReasoningOrFence || !diagnostics.contractOk) {
         return {
             ...review,
@@ -472,6 +477,7 @@ function collectDiagnostics(fixture: AiCompletionFixture, raw: string, insertion
         unexpectedEmpty: fixture.expectedBehavior === "accept" ? insertion.length === 0 : false,
         rawHasReasoningOrFence: /<think>|<\/think>|```/i.test(raw),
         insertHasReasoningOrFence: /<think>|<\/think>|```/i.test(insertion),
+        forbiddenContextHit: containsForbiddenContext(insertion, fixture),
         empty: insertion.length === 0
     };
 }
@@ -497,6 +503,36 @@ function currentCardEvidence(fixture: AiCompletionFixture): string[] {
         ...card.subtasks.map((subtask) => subtask.title),
         ...card.comments.map((comment) => comment.body)
     ].filter(Boolean);
+}
+
+function compactForbiddenContext(fixture: AiCompletionFixture): object | undefined {
+    const relatedCards = forbiddenRelatedCards(fixture).map((card) => ({
+        title: card.title,
+        descriptionText: card.descriptionText ?? card.descriptionMarkdown ?? ""
+    }));
+    return relatedCards?.length ? { relatedCards } : undefined;
+}
+
+function containsForbiddenContext(value: string, fixture: AiCompletionFixture): boolean {
+    const candidate = normalizeMeaning(value);
+    if (!candidate) return false;
+    return forbiddenRelatedCards(fixture).some((card) => {
+        const values = [card.title, card.descriptionText ?? "", card.descriptionMarkdown ?? ""];
+        return values.some((item) => {
+            const normalized = normalizeMeaning(item);
+            return normalized.length >= 4 && (candidate.includes(normalized) || normalized.includes(candidate));
+        });
+    });
+}
+
+function forbiddenRelatedCards(fixture: AiCompletionFixture): ForbiddenRelatedCard[] {
+    if (fixture.forbiddenContext?.relatedCards) return fixture.forbiddenContext.relatedCards;
+    const currentCard = fixture.context.currentCard;
+    if (!currentCard) return [];
+    return [{
+        title: "旧相关卡片",
+        descriptionText: "不应进入文本补全上下文。"
+    }];
 }
 
 function isSuggestionWithinLimit(value: string, maxChars: number): boolean {

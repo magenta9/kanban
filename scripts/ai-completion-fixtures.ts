@@ -12,6 +12,9 @@ export interface AiCompletionFixture {
     idealInsertions?: string[];
     expectedNotes: string;
     context: AiSuggestionCardContext;
+    forbiddenContext?: {
+        relatedCards?: KanbanCard[];
+    };
 }
 
 const now = Date.UTC(2026, 4, 23);
@@ -576,7 +579,6 @@ export const aiCompletionFixtures: AiCompletionFixture[] = [
 function context(currentCard: KanbanCard): AiSuggestionCardContext {
     return {
         currentCard,
-        relatedCards: [card({ id: `related-${currentCard.id}`, title: "旧相关卡片", descriptionText: "不应进入文本补全上下文。" })],
         boardLabels: [
             { id: "label-1", boardId: "board-1", name: "Dev", color: "#64748b" },
             { id: "label-2", boardId: "board-1", name: "Risk", color: "#ef4444" },
