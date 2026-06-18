@@ -23,6 +23,10 @@ export interface KanbanComment {
     updatedAt: number;
 }
 
+export function isAgentRunComment(comment: Pick<KanbanComment, "body">): boolean {
+    return /^Agent run (started|completed|failed|finished)\./i.test(comment.body.trim());
+}
+
 export interface KanbanBoard {
     id: string;
     name: string;

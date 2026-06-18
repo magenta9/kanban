@@ -105,6 +105,52 @@ describe("Card Editing State", () => {
         expect(onSave).not.toHaveBeenCalled();
     });
 
+    it("reconciles external comments for the same card without dropping local edits", () => {
+        vi.useFakeTimers();
+        const onSave = vi.fn().mockResolvedValue(undefined);
+        const existingComment = { id: "comment-1", body: "Existing", createdAt: 1, updatedAt: 1 };
+        const agentRunComment = { id: "comment-2", body: "Agent run completed.", createdAt: 2, updatedAt: 2 };
+        const card = testCard({ comments: [existingComment] });
+        const { result, rerender } = renderHook(({ activeCard }) => useCardEditingState({ card: activeCard, onSave, saveDelayMs: 25 }), {
+            initialProps: { activeCard: card }
+        });
+
+        act(() => result.current.updateTitle("Local title"));
+        rerender({ activeCard: { ...card, updatedAt: 2, comments: [existingComment, agentRunComment] } });
+
+        expect(result.current.title).toBe("Local title");
+        expect(result.current.comments.map((comment) => comment.body)).toEqual(["Existing", "Agent run completed."]);
+
+        act(() => vi.advanceTimersByTime(25));
+        expect(onSave).toHaveBeenCalledWith("card-1", expect.objectContaining({
+            title: "Local title",
+            comments: [existingComment, agentRunComment]
+        }));
+    });
+
+    it("does not merge ordinary external Comments into dirty local Comments", () => {
+        vi.useFakeTimers();
+        const onSave = vi.fn().mockResolvedValue(undefined);
+        const existingComment = { id: "comment-1", body: "Existing", createdAt: 1, updatedAt: 1 };
+        const localCommentBody = "Local note";
+        const externalComment = { id: "comment-external", body: "External note", createdAt: 3, updatedAt: 3 };
+        const card = testCard({ comments: [existingComment] });
+        const { result, rerender } = renderHook(({ activeCard }) => useCardEditingState({ card: activeCard, onSave, saveDelayMs: 25 }), {
+            initialProps: { activeCard: card }
+        });
+
+        act(() => result.current.addComment(localCommentBody));
+        const createdLocalComment = result.current.comments.find((comment) => comment.body === localCommentBody)!;
+        rerender({ activeCard: { ...card, updatedAt: 2, comments: [existingComment, externalComment] } });
+
+        expect(result.current.comments.map((comment) => comment.body)).toEqual(["Existing", "Local note"]);
+
+        act(() => vi.advanceTimersByTime(25));
+        expect(onSave).toHaveBeenCalledWith("card-1", expect.objectContaining({
+            comments: [existingComment, createdLocalComment]
+        }));
+    });
+
     it("mutates Subtasks through the hook interface", () => {
         const onSave = vi.fn().mockResolvedValue(undefined);
         const { result } = renderHook(() => useCardEditingState({

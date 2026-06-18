@@ -1,8 +1,8 @@
+import { isAgentRunComment } from "@kanban/shared";
 import type {
     KanbanAgentInfo,
     KanbanCard,
     KanbanCardCommentsChangedEvent,
-    KanbanComment,
     StartKanbanAgentRunInput,
     StartKanbanAgentRunResult,
     ValidateKanbanAgentRepoResult
@@ -233,10 +233,6 @@ export function buildPaseoPrompt(card: KanbanCard): string {
         "Comments:",
         comments
     ].join("\n");
-}
-
-function isAgentRunComment(comment: KanbanComment): boolean {
-    return /^Agent run (started|completed|failed|finished)\./i.test(comment.body.trim());
 }
 
 function agentWorktreeName(card: KanbanCard): string {

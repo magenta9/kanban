@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { isAgentRunComment } from "@kanban/shared";
 import type { KanbanCard, KanbanCardPatch, KanbanComment, KanbanPriority, KanbanRichTextDocument, KanbanSubtask } from "@kanban/shared";
 
 export interface CardEditSnapshot {
@@ -90,28 +91,56 @@ export function useCardEditingState({
     const [descriptionText, setDescriptionText] = useState(initialSnapshot.descriptionText);
     const [subtasks, setSubtasks] = useState<KanbanSubtask[]>(initialSnapshot.subtasks);
     const [comments, setComments] = useState<KanbanComment[]>(initialSnapshot.comments);
+    const cardId = useRef(card.id);
+    const baseComments = useRef(initialSnapshot.comments);
     const lastSavedSnapshot = useRef(cardEditSnapshotKey(initialSnapshot));
+
+    function snapshotFromState(): CardEditSnapshot {
+        return {
+            title,
+            columnId,
+            priority,
+            startDate,
+            endDate,
+            descriptionMarkdown,
+            descriptionJson,
+            descriptionText,
+            subtasks,
+            comments
+        };
+    }
 
     useEffect(() => {
         const nextSnapshot = cardEditSnapshotFromCard(card);
-        setTitle(nextSnapshot.title);
-        setColumnId(nextSnapshot.columnId);
-        setPriority(nextSnapshot.priority);
-        setStartDate(nextSnapshot.startDate);
-        setEndDate(nextSnapshot.endDate);
-        setDescriptionMarkdown(nextSnapshot.descriptionMarkdown);
-        setDescriptionJson(nextSnapshot.descriptionJson);
-        setDescriptionText(nextSnapshot.descriptionText);
-        setSubtasks(nextSnapshot.subtasks);
-        setComments(nextSnapshot.comments);
+        const currentSnapshot = snapshotFromState();
+        const reconciledSnapshot = card.id === cardId.current
+            ? {
+                ...currentSnapshot,
+                comments: reconcileAgentRunComments(baseComments.current, currentSnapshot.comments, nextSnapshot.comments)
+            }
+            : nextSnapshot;
+
+        cardId.current = card.id;
+        baseComments.current = nextSnapshot.comments;
+        setTitle(reconciledSnapshot.title);
+        setColumnId(reconciledSnapshot.columnId);
+        setPriority(reconciledSnapshot.priority);
+        setStartDate(reconciledSnapshot.startDate);
+        setEndDate(reconciledSnapshot.endDate);
+        setDescriptionMarkdown(reconciledSnapshot.descriptionMarkdown);
+        setDescriptionJson(reconciledSnapshot.descriptionJson);
+        setDescriptionText(reconciledSnapshot.descriptionText);
+        setSubtasks(reconciledSnapshot.subtasks);
+        setComments(reconciledSnapshot.comments);
         lastSavedSnapshot.current = cardEditSnapshotKey(nextSnapshot);
-    }, [card.id]);
+    }, [card.id, card.updatedAt]);
 
     useEffect(() => {
-        const snapshot: CardEditSnapshot = { title, columnId, priority, startDate, endDate, descriptionMarkdown, descriptionJson, descriptionText, subtasks, comments };
+        const snapshot = snapshotFromState();
         const snapshotKey = cardEditSnapshotKey(snapshot);
         if (snapshotKey === lastSavedSnapshot.current) return;
         const timeout = window.setTimeout(() => {
+            baseComments.current = snapshot.comments;
             lastSavedSnapshot.current = snapshotKey;
             void onSave(card.id, cardEditPatch(snapshot)).catch(() => {
                 lastSavedSnapshot.current = "";
@@ -192,6 +221,18 @@ export function useCardEditingState({
         addComment,
         deleteComment
     };
+}
+
+function reconcileAgentRunComments(base: KanbanComment[], current: KanbanComment[], next: KanbanComment[]): KanbanComment[] {
+    if (areCommentsEqual(base, current)) return next;
+    const baseIds = new Set(base.map((item) => item.id));
+    const currentIds = new Set(current.map((item) => item.id));
+    const externalAdditions = next.filter((item) => !baseIds.has(item.id) && !currentIds.has(item.id) && isAgentRunComment(item));
+    return externalAdditions.length > 0 ? [...current, ...externalAdditions] : current;
+}
+
+function areCommentsEqual(left: KanbanComment[], right: KanbanComment[]): boolean {
+    return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function richTextDocumentFromPlainText(value: string): KanbanRichTextDocument | undefined {
