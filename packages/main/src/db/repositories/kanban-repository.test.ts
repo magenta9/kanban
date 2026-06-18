@@ -125,6 +125,27 @@ describe("KanbanRepository", () => {
         expect(repository.listCards({ boardId: board.id })[0]?.comments[0]?.body).toBe("Looks ready");
     });
 
+    it("gets a Card by id with its Label and Recurrence summary", () => {
+        const repository = createRepository();
+        const board = repository.createBoard({ name: "Launch" });
+        const [backlog] = repository.listColumns({ boardId: board.id });
+        const card = repository.createCard({ boardId: board.id, columnId: backlog!.id, title: "Ship" });
+        const label = repository.createLabel({ boardId: board.id, name: "Agent", color: "#2563eb" });
+
+        repository.setCardLabels({ cardId: card.id, labelIds: [label.id] });
+        repository.enableCardRecurrence({ cardId: card.id, trigger: "fixed", cycle: "weekly" });
+
+        expect(repository.getCard({ id: card.id })).toMatchObject({
+            id: card.id,
+            labelIds: [label.id],
+            recurrence: {
+                trigger: "fixed",
+                cycle: "weekly",
+                status: "active"
+            }
+        });
+    });
+
     it("persists and clears card date ranges", () => {
         const repository = createRepository();
         const board = repository.createBoard({ name: "Launch" });

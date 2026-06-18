@@ -9,9 +9,13 @@ import type {
 } from "@kanban/shared";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import type { KanbanRepository } from "../db/repositories/kanban-repository";
 import type { AgentRunOutcome, AgentRunRecord, AgentRunRepository } from "./agent-run-repository";
 import { createPaseoCliAdapter, type PaseoAdapter } from "./paseo-adapter";
+
+export interface AgentRunCardStore {
+    getCard(input: { id: string }): KanbanCard;
+    addCardComment(input: { cardId: string; body: string }): KanbanCard;
+}
 
 export interface AgentRunServiceOptions {
     paseo?: PaseoAdapter;
@@ -24,7 +28,7 @@ export class AgentRunService {
     private readonly backgroundTaskRunner: (task: () => Promise<void>) => void;
 
     constructor(
-        private readonly kanban: KanbanRepository,
+        private readonly cards: AgentRunCardStore,
         private readonly agentRuns: AgentRunRepository,
         options: AgentRunServiceOptions = {}
     ) {
@@ -48,7 +52,7 @@ export class AgentRunService {
     }
 
     async startRun(input: StartKanbanAgentRunInput): Promise<StartKanbanAgentRunResult> {
-        const card = this.findCard(input.cardId);
+        const card = this.cards.getCard({ id: input.cardId });
         const repoPath = card.gitRepositoryPath?.trim();
         if (!repoPath) {
             throw new Error("Bind a Git repository to this card before starting an Agent Run.");
@@ -84,7 +88,7 @@ export class AgentRunService {
                     repoRoot,
                     worktreeName
                 });
-                updatedCard = this.kanban.addCardComment({
+                updatedCard = this.cards.addCardComment({
                     cardId: card.id,
                     body: startComment({ agent, paseoAgentId: startedRun.paseoAgentId, worktreeName, title: card.title })
                 });
@@ -114,15 +118,6 @@ export class AgentRunService {
         for (const record of records) {
             await this.recoverRunningRun(record);
         }
-    }
-
-    private findCard(cardId: string): KanbanCard {
-        const boards = this.kanban.listBoards();
-        for (const board of boards) {
-            const card = this.kanban.listCards({ boardId: board.id, includeArchived: true }).find((item) => item.id === cardId);
-            if (card) return card;
-        }
-        throw new Error(`Kanban card not found: ${cardId}`);
     }
 
     private emitCommentsChanged(card: KanbanCard): void {
@@ -184,7 +179,7 @@ export class AgentRunService {
 
     private cardExists(cardId: string): boolean {
         try {
-            this.findCard(cardId);
+            this.cards.getCard({ id: cardId });
             return true;
         }
         catch {
@@ -195,7 +190,7 @@ export class AgentRunService {
     private finalizeAgentRun(record: AgentRunRecord, input: { status: "finished" | "recovery_failed"; outcome: Exclude<AgentRunOutcome, "unknown">; details: string }): void {
         let updatedCard!: KanbanCard;
         this.agentRuns.transaction(() => {
-            updatedCard = this.kanban.addCardComment({
+            updatedCard = this.cards.addCardComment({
                 cardId: record.cardId,
                 body: finishComment({
                     agent: { id: record.providerId, name: record.providerName },

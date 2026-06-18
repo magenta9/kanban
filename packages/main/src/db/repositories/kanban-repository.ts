@@ -282,6 +282,10 @@ export class KanbanRepository {
         return this.attachRecurrenceSummaries(this.attachCardLabels((rows as CardRow[]).map(rowToCard)));
     }
 
+    getCard(input: { id: string }): KanbanCard {
+        return this.requireCard(input.id);
+    }
+
     createCard(input: CreateKanbanCardInput): KanbanCard {
         const column = this.requireColumn(input.columnId);
         if (column.boardId !== input.boardId) {
